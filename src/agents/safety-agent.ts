@@ -1,6 +1,6 @@
 import type { Task, TaskResult, SourceRef, AgentFinding, AgentOutputData } from "./types";
 import { refineQueryWithGemini, extractFindingsWithGemini } from "./gemini";
-import { searchBrave } from "./brave";
+import { searchTavily } from "./tavily";
 
 /**
  * Normalizes a URL for deduplication.
@@ -37,8 +37,8 @@ export async function executeSafetyAgent(task: Task): Promise<TaskResult> {
   // Step 1: Safety-specific query refinement via Gemini
   const refinedQuery = await refineQueryWithGemini(rawInput, "safety");
 
-  // Step 2: Retrieve safety-focused web sources via Brave Search
-  const searchResults = await searchBrave(refinedQuery, { count: 8 });
+  // Step 2: Retrieve safety-focused web sources via Tavily Search
+  const searchResults = await searchTavily(refinedQuery, { count: 8 });
 
   // Step 3: Extract structured safety claims and risk warnings
   const { summary, findings: rawFindings } = await extractFindingsWithGemini(
