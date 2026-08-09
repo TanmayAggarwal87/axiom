@@ -1,6 +1,6 @@
 import type { Task, TaskResult, SourceRef, AgentFinding, AgentOutputData } from "./types";
 import { refineQueryWithGemini, extractFindingsWithGemini } from "./gemini";
-import { searchBrave } from "./brave";
+import { searchTavily } from "./tavily";
 
 /**
  * Normalizes a URL for deduplication.
@@ -37,8 +37,8 @@ export async function executeSearchAgent(task: Task): Promise<TaskResult> {
   // Step 1: Query Refinement via Gemini
   const refinedQuery = await refineQueryWithGemini(rawInput, "search");
 
-  // Step 2: Retrieve Search Results via Brave API
-  const searchResults = await searchBrave(refinedQuery, { count: 8 });
+  // Step 2: Retrieve Search Results via Tavily API
+  const searchResults = await searchTavily(refinedQuery, { count: 8 });
 
   // Step 3: Extract structured findings via Gemini
   const { summary, findings: rawFindings } = await extractFindingsWithGemini(

@@ -59,7 +59,7 @@ This combines what would normally be a "safe v1" (fixed pipeline, no surprises) 
 - **Database:** Supabase (Postgres). We need it — this is not optional. Reasons: we need durable, queryable storage for research sessions, tasks, evidence, claims, payment receipts, an events log, and user credit balances. This can't live in memory or in the client; sessions must survive page reloads and multiple users must be isolated from each other's data.
 - **Auth:** Supabase Auth (email or magic link is enough — keep it simple, this is not the focus of the project).
 - **LLMs:** Gemini API and Grok API only. Use Gemini as the default/primary model for planning, agent reasoning, and synthesis. Grok may be used as an alternative/fallback or for a specific agent if your module owner prefers — document which model each call uses. Do not introduce any other model provider.
-- **Search:** Brave Search API for general web search.
+- **Search:** Tavily Search API for general web search.
 - **Payments:** x402 protocol on **Base Sepolia** testnet, settling in test USDC, via the free community facilitator at `https://x402.org/facilitator`. Stack: **viem** for account/key handling and transaction signing, plus **x402-fetch** (or the equivalent `@x402/fetch` + `@x402/evm` + `@x402/core` packages — confirm current package names on install) wrapping `fetch` to handle the `402 → sign → retry → 200` flow automatically. Do **not** add wagmi (that's for connecting a user's browser wallet — we have no user-facing wallet UI, the treasury wallet is server-side only) or Hardhat (that's for writing/deploying custom smart contracts — we aren't deploying any; x402 uses standard USDC transfers).
 - **Fiat top-up:** Stripe (test mode) for the user-facing credit wallet.
 - **Styling:** Keep it simple — Tailwind is fine. Do not spend disproportionate time on visual polish before the pipeline works end-to-end.
@@ -182,7 +182,7 @@ Rebalanced from a strict "one agent type per module" split: Module 2 owns the th
 ### Module 2 — Search, Academic & Safety Agents
 **Owns:** the three "gathering" agents, which all share one template.
 
-- **Search Agent:** takes a task input, optionally refines the query via Gemini, calls Brave Search, returns structured findings (claims + `SourceRef[]`) written back via Module 1's API.
+- **Search Agent:** takes a task input, optionally refines the query via Gemini, calls Tavily Search, returns structured findings (claims + `SourceRef[]`) written back via Module 1's API.
 - **Academic Agent:** same shape, but targets academic/research sources. This is the **primary paid agent** — when it hits a paywalled source, it calls the x402 client (built in Module 3) to pay and retrieve it. Coordinate the exact function signature for "pay and fetch" with Module 3 early, since you're the first consumer of it.
 - **Safety Agent:** same shape, focused on risks/contraindications/side effects. This is the most copy-paste-able of the three (same template, different prompt/sources) — if you're ahead of schedule, this is the first thing to hand off to whoever's behind on another module.
 - Every agent follows the same shape: (1) optional LLM reasoning step, (2) tool/API call (free or paid), (3) structured output with `SourceRef`s, written back through Module 1's state API — keep this consistent across all three.

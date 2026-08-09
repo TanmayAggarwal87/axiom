@@ -1,7 +1,7 @@
 import type { Task, TaskResult, SourceRef, AgentFinding, AgentOutputData } from "./types";
 import type { PaidFetcher } from "./adapters/paid-fetcher";
 import { refineQueryWithGemini, extractFindingsWithGemini } from "./gemini";
-import { searchBrave } from "./brave";
+import { searchTavily } from "./tavily";
 
 /**
  * Normalizes a URL for deduplication.
@@ -81,8 +81,8 @@ export async function executeAcademicAgent(
   // Step 1: Academic-focused query refinement via Gemini
   const refinedQuery = await refineQueryWithGemini(rawInput, "academic");
 
-  // Step 2: Retrieve free academic search results via Brave Search with academic domain prioritization
-  const searchResults = await searchBrave(refinedQuery, {
+  // Step 2: Retrieve free academic search results via Tavily Search with academic domain prioritization
+  const searchResults = await searchTavily(refinedQuery, {
     count: 8,
     domainFilter: ACADEMIC_DOMAINS,
   });
