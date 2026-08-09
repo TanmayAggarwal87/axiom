@@ -7,7 +7,7 @@ import {
   EXTRACT_FINDINGS_ACADEMIC_PROMPT,
 } from "./prompts";
 
-const GEMINI_MODEL = "gemini-2.5-flash";
+const GEMINI_MODEL = "gemini-3.6-flash";
 
 function isMockAllowed(): boolean {
   return process.env.ALLOW_MOCKS === "true" || process.env.NODE_ENV === "test";
