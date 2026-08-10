@@ -263,18 +263,40 @@ async function executeSynthesizerAgent(
 
   if (process.env.GEMINI_API_KEY_3 && !process.env.GEMINI_API_KEY_3.includes("your-gemini")) {
     try {
-      const prompt = `Synthesize a concise executive summary for research query: "${rawQuery}".
-Evidence gathered (${state.evidence.length} sources):
-${state.evidence.map((e) => `- ${e.claim} (Source: ${e.source.title}, Conf: ${e.confidence})`).join("\n")}
+      const evidenceText = state.evidence
+        .map((e) => `- Claim: "${e.claim}" (Source: ${e.source.title}, URL: ${e.source.url}, Confidence: ${e.confidence})`)
+        .join("\n");
+      const claimsText = state.claims
+        .map((c) => `- [${c.status}] ${c.text}${c.supportedText ? ` (Verified note: ${c.supportedText})` : ""}`)
+        .join("\n");
 
-Provide a coherent 2-3 paragraph summary.`;
+      const prompt = `You are a Lead Synthesizer for Axiom, an autonomous AI research system. Write a comprehensive, in-depth executive summary for the research query: "${rawQuery}".
+
+Requirements:
+- Write a comprehensive executive summary of at least 400–600 words that synthesizes the key findings across all research areas, not a brief abstract.
+- Thoroughly integrate the evidence and claims gathered below into a cohesive, structured narrative with multiple detailed paragraphs.
+- Highlight key empirical findings, clinical or academic evidence, safety profiles, contraindications, and practical implications.
+
+Evidence Gathered (${state.evidence.length} sources):
+${evidenceText || "No evidence recorded."}
+
+Verified Claims (${state.claims.length}):
+${claimsText || "No claims recorded."}
+
+Provide a detailed, multi-paragraph synthesis.`;
 
       const response = await fetch(
         `https://generativelanguage.googleapis.com/v1beta/models/gemini-3.6-flash:generateContent?key=${process.env.GEMINI_API_KEY_3}`,
         {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ contents: [{ parts: [{ text: prompt }] }] }),
+          body: JSON.stringify({
+            contents: [{ parts: [{ text: prompt }] }],
+            generationConfig: {
+              maxOutputTokens: 2500,
+              temperature: 0.3,
+            },
+          }),
         }
       );
 

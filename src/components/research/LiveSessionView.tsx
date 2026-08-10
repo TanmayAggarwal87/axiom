@@ -104,11 +104,21 @@ export function LiveSessionView({ sessionId, onComplete }: LiveSessionViewProps)
   const [error, setError] = useState<string | null>(null);
   const eventsEndRef = useRef<HTMLDivElement>(null);
   const intervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const onCompleteRef = useRef(onComplete);
 
   useEffect(() => {
+    onCompleteRef.current = onComplete;
+  }, [onComplete]);
+
+  useEffect(() => {
+    if (!sessionId) return;
     let cancelled = false;
+    let isFetching = false;
 
     async function poll() {
+      if (isFetching || cancelled) return;
+      isFetching = true;
+
       try {
         const res = await fetch(`/api/research/session/${sessionId}`);
         const data = await res.json();
@@ -124,7 +134,7 @@ export function LiveSessionView({ sessionId, onComplete }: LiveSessionViewProps)
             tasks.every((t: Task) => t.status === "done" || t.status === "failed");
 
           if (allFinished) {
-            onComplete(data.state);
+            onCompleteRef.current(data.state);
             if (intervalRef.current) {
               clearInterval(intervalRef.current);
               intervalRef.current = null;
@@ -133,22 +143,25 @@ export function LiveSessionView({ sessionId, onComplete }: LiveSessionViewProps)
         }
       } catch (err: any) {
         if (!cancelled) setError(err.message);
+      } finally {
+        isFetching = false;
       }
     }
 
     // Initial fetch
     poll();
 
-    // Poll every 1.5s
-    intervalRef.current = setInterval(poll, 1500);
+    // Poll every 2000ms while active
+    intervalRef.current = setInterval(poll, 2000);
 
     return () => {
       cancelled = true;
       if (intervalRef.current) {
         clearInterval(intervalRef.current);
+        intervalRef.current = null;
       }
     };
-  }, [sessionId, onComplete]);
+  }, [sessionId]);
 
   // Auto-scroll events
   useEffect(() => {

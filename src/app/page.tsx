@@ -7,11 +7,14 @@ import { ReportView } from "@/components/report/ReportView";
 import { CreditWalletModal } from "@/components/wallet/CreditWalletModal";
 import type { SessionState } from "@/lib/orchestrator/types";
 import { Toaster, toast } from "sonner";
+import { createClient } from "@supabase/supabase-js";
 import {
   Wallet,
   Activity,
   Hexagon,
+  RotateCw,
 } from "lucide-react";
+import { Button } from "@/components/ui/button";
 
 type AppPhase = "idle" | "running" | "completed";
 
@@ -22,17 +25,89 @@ export default function Home() {
   const [sessionQuery, setSessionQuery] = useState("");
   const [completedState, setCompletedState] = useState<SessionState | null>(null);
   const [startLoading, setStartLoading] = useState(false);
+  const [refreshing, setRefreshing] = useState(false);
   const walletRef = useRef<HTMLButtonElement>(null);
+  const isFetchingBalanceRef = useRef(false);
 
-  // Fetch initial balance
-  useEffect(() => {
-    fetch("/api/wallet/balance?userId=default-user")
-      .then((r) => r.json())
-      .then((data) => {
-        if (data.success) setCredits(data.credits);
-      })
-      .catch(() => {});
+  // Authoritative balance refetch
+  const refreshBalance = useCallback(async () => {
+    if (isFetchingBalanceRef.current) return;
+    isFetchingBalanceRef.current = true;
+    setRefreshing(true);
+    try {
+      const r = await fetch("/api/wallet/balance?userId=default-user");
+      const data = await r.json();
+      if (data.success && typeof data.credits === "number") {
+        setCredits(data.credits);
+      }
+    } catch (err) {
+      console.error("Failed to refresh credit balance:", err);
+    } finally {
+      isFetchingBalanceRef.current = false;
+      setRefreshing(false);
+    }
   }, []);
+
+  // 1. Initial fetch & Tab Focus / Visibility Change Fallback
+  useEffect(() => {
+    refreshBalance();
+
+    const handleFocus = () => {
+      if (document.visibilityState === "visible") {
+        refreshBalance();
+      }
+    };
+
+    window.addEventListener("focus", handleFocus);
+    document.addEventListener("visibilitychange", handleFocus);
+
+    return () => {
+      window.removeEventListener("focus", handleFocus);
+      document.removeEventListener("visibilitychange", handleFocus);
+    };
+  }, [refreshBalance]);
+
+  // 2. Supabase Realtime Subscription on authoritative 'users' table
+  useEffect(() => {
+    const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL;
+    const supabaseAnonKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY;
+
+    if (!supabaseUrl || !supabaseAnonKey || supabaseUrl.includes("your-supabase")) {
+      return;
+    }
+
+    try {
+      const supabase = createClient(supabaseUrl, supabaseAnonKey);
+      const channel = supabase
+        .channel("user-credits-realtime")
+        .on(
+          "postgres_changes",
+          {
+            event: "*",
+            schema: "public",
+            table: "users",
+            filter: "id=eq.default-user",
+          },
+          (payload: any) => {
+            if (payload.new && typeof payload.new.credits === "number") {
+              setCredits(payload.new.credits);
+              toast.info("Credit balance updated", {
+                description: `New balance: $${payload.new.credits.toFixed(2)} USDC`,
+              });
+            } else {
+              refreshBalance();
+            }
+          }
+        )
+        .subscribe();
+
+      return () => {
+        supabase.removeChannel(channel);
+      };
+    } catch (err) {
+      console.warn("[Realtime] Failed to initialize Supabase Realtime:", err);
+    }
+  }, [refreshBalance]);
 
   // Start research session
   async function handleStartResearch(query: string, budgetUsdc: number) {
@@ -96,14 +171,7 @@ export default function Home() {
     setSessionId(null);
     setSessionQuery("");
     setCompletedState(null);
-
-    // Refresh credit balance
-    fetch("/api/wallet/balance?userId=default-user")
-      .then((r) => r.json())
-      .then((data) => {
-        if (data.success) setCredits(data.credits);
-      })
-      .catch(() => {});
+    refreshBalance();
   }
 
   function handleOpenWallet() {
@@ -134,20 +202,34 @@ export default function Home() {
             </span>
           </div>
 
-          {/* Wallet */}
-          <CreditWalletModal
-            credits={credits}
-            onTopUp={(newBalance) => setCredits(newBalance)}
-            trigger={
-              <button
-                ref={walletRef}
-                className="inline-flex items-center gap-2 rounded-lg border border-border/30 bg-card/50 backdrop-blur-sm px-3 py-1.5 text-sm hover:bg-accent/80 transition-all duration-200 cursor-pointer"
-              >
-                <Wallet className="h-4 w-4 text-emerald-500" />
-                <span className="font-semibold">${credits.toFixed(2)}</span>
-              </button>
-            }
-          />
+          {/* Wallet & Refresh Affordance */}
+          <div className="flex items-center gap-1.5">
+            <CreditWalletModal
+              credits={credits}
+              onTopUp={(newBalance) => setCredits(newBalance)}
+              onRefreshBalance={refreshBalance}
+              refreshing={refreshing}
+              trigger={
+                <button
+                  ref={walletRef}
+                  className="inline-flex items-center gap-2 rounded-lg border border-border/30 bg-card/50 backdrop-blur-sm px-3 py-1.5 text-sm hover:bg-accent/80 transition-all duration-200 cursor-pointer"
+                >
+                  <Wallet className="h-4 w-4 text-emerald-500" />
+                  <span className="font-semibold">${credits.toFixed(2)}</span>
+                </button>
+              }
+            />
+            <Button
+              variant="ghost"
+              size="icon"
+              onClick={refreshBalance}
+              disabled={refreshing}
+              className="h-8 w-8 text-muted-foreground hover:text-foreground cursor-pointer"
+              title="Refresh credit balance"
+            >
+              <RotateCw className={`h-3.5 w-3.5 ${refreshing ? "animate-spin" : ""}`} />
+            </Button>
+          </div>
         </div>
       </header>
 

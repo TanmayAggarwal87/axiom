@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo } from "react";
+import { useMemo, useState } from "react";
 import { Card } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
@@ -9,6 +9,9 @@ import { ScrollArea } from "@/components/ui/scroll-area";
 import { PaymentProofPanel } from "@/components/payments/PaymentProofPanel";
 import type { SessionState } from "@/lib/orchestrator/types";
 import { compileReport, type CompiledReport } from "@/lib/report/compiler";
+import { ReportPdfDocument } from "./ReportPdfDocument";
+import { pdf } from "@react-pdf/renderer";
+import { toast } from "sonner";
 import {
   FileText,
   CheckCircle2,
@@ -22,6 +25,8 @@ import {
   Coins,
   Search,
   ArrowLeft,
+  FileDown,
+  Loader2,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 
@@ -71,6 +76,30 @@ interface ReportViewProps {
 
 export function ReportView({ state, query, onNewResearch }: ReportViewProps) {
   const report = useMemo(() => compileReport(state, query), [state, query]);
+  const [exportingPdf, setExportingPdf] = useState(false);
+
+  async function handleExportPdf() {
+    try {
+      setExportingPdf(true);
+      const blob = await pdf(<ReportPdfDocument report={report} />).toBlob();
+      const url = URL.createObjectURL(blob);
+      const link = document.createElement("a");
+      link.href = url;
+      link.download = `Axiom_Research_Report_${Date.now()}.pdf`;
+      document.body.appendChild(link);
+      link.click();
+      document.body.removeChild(link);
+      URL.revokeObjectURL(url);
+      toast.success("Report PDF downloaded successfully");
+    } catch (err: any) {
+      console.error("[ReportView] PDF generation failed:", err);
+      toast.error("Failed to generate PDF", {
+        description: err?.message || "PDF generation error",
+      });
+    } finally {
+      setExportingPdf(false);
+    }
+  }
 
   return (
     <div className="w-full max-w-4xl mx-auto space-y-6">
@@ -86,9 +115,27 @@ export function ReportView({ state, query, onNewResearch }: ReportViewProps) {
             <ArrowLeft className="h-4 w-4" />
             New Research
           </Button>
-          <Badge variant="outline" className="text-xs font-mono border-border/30">
-            {new Date(report.generatedAt).toLocaleString()}
-          </Badge>
+
+          <div className="flex items-center gap-2">
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={handleExportPdf}
+              disabled={exportingPdf}
+              className="gap-1.5 border-emerald-500/30 text-emerald-400 hover:bg-emerald-500/10 cursor-pointer"
+            >
+              {exportingPdf ? (
+                <Loader2 className="h-4 w-4 animate-spin" />
+              ) : (
+                <FileDown className="h-4 w-4" />
+              )}
+              {exportingPdf ? "Generating PDF..." : "Export PDF"}
+            </Button>
+
+            <Badge variant="outline" className="text-xs font-mono border-border/30">
+              {new Date(report.generatedAt).toLocaleString()}
+            </Badge>
+          </div>
         </div>
 
         <div className="text-center space-y-3">

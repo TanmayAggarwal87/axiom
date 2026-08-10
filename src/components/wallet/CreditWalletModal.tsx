@@ -10,7 +10,7 @@ import {
   DialogTrigger,
 } from "@/components/ui/dialog";
 import { Button } from "@/components/ui/button";
-import { Wallet, Plus, CheckCircle2, Loader2 } from "lucide-react";
+import { Wallet, Plus, CheckCircle2, Loader2, RotateCw } from "lucide-react";
 
 const TOP_UP_OPTIONS = [
   { amount: 5, label: "$5.00" },
@@ -22,10 +22,18 @@ const TOP_UP_OPTIONS = [
 interface CreditWalletModalProps {
   credits: number;
   onTopUp: (newBalance: number) => void;
+  onRefreshBalance?: () => void;
+  refreshing?: boolean;
   trigger?: React.ReactElement;
 }
 
-export function CreditWalletModal({ credits, onTopUp, trigger }: CreditWalletModalProps) {
+export function CreditWalletModal({
+  credits,
+  onTopUp,
+  onRefreshBalance,
+  refreshing,
+  trigger,
+}: CreditWalletModalProps) {
   const [open, setOpen] = useState(false);
   const [selected, setSelected] = useState<number | null>(null);
   const [loading, setLoading] = useState(false);
@@ -107,7 +115,19 @@ export function CreditWalletModal({ credits, onTopUp, trigger }: CreditWalletMod
 
         <div className="space-y-6 pt-2">
           {/* Current Balance */}
-          <div className="rounded-xl border border-border/30 bg-muted/30 p-4 text-center">
+          <div className="relative rounded-xl border border-border/30 bg-muted/30 p-4 text-center">
+            {onRefreshBalance && (
+              <Button
+                variant="ghost"
+                size="icon"
+                onClick={onRefreshBalance}
+                disabled={refreshing}
+                className="absolute top-2 right-2 h-7 w-7 text-muted-foreground hover:text-foreground cursor-pointer"
+                title="Refresh balance"
+              >
+                <RotateCw className={`h-3.5 w-3.5 ${refreshing ? "animate-spin" : ""}`} />
+              </Button>
+            )}
             <p className="text-xs uppercase tracking-wider text-muted-foreground mb-1">
               Current Balance
             </p>

@@ -193,9 +193,8 @@ function buildFindingsContent(
     return "Search agents completed but returned no structured findings.";
   }
 
-  // Append citation markers for first few citations
+  // Append citation markers for all citations
   const citationRefs = citations
-    .slice(0, 3)
     .map((c) => `[${c.index}]`)
     .join(" ");
 
