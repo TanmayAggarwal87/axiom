@@ -210,9 +210,9 @@ export async function runFactChecker(input: FactCheckerInput): Promise<FactCheck
   }
 
   // Step 3: Polish text with Gemini if key is present
-  if (process.env.GEMINI_API_KEY && !process.env.GEMINI_API_KEY.includes("your-gemini")) {
+  if (process.env.GEMINI_API_KEY_3 && !process.env.GEMINI_API_KEY_3.includes("your-gemini")) {
     try {
-      const ai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY });
+      const ai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY_3 });
       for (const claim of currentClaims) {
         if (claim.status === "partially_supported" && !claim.supportedText?.includes("hedged")) {
           const response = await ai.models.generateContent({

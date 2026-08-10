@@ -91,12 +91,11 @@ export async function executeAcademicAgent(
   let paidArticleData: any = null;
   let paidSourceUrl: string | null = null;
 
-  // Ensure forcePaidFetchUrl is only accepted when explicitly provided in test/dev execution
-  if (options?.forcePaidFetchUrl && options.paidFetcher) {
-    if (process.env.NODE_ENV === "production" && process.env.ALLOW_DEV_FORCE_PAID !== "true") {
-      console.warn("[AcademicAgent] forcePaidFetchUrl override rejected in production mode.");
-    } else {
-      paidSourceUrl = options.forcePaidFetchUrl;
+  const targetPaidUrl = options?.forcePaidFetchUrl || process.env.X402_RESOURCE_URL || "http://localhost:3000/api/x402-resource";
+
+  if (options?.paidFetcher && targetPaidUrl) {
+    try {
+      paidSourceUrl = targetPaidUrl;
       const paidRes = await options.paidFetcher.payAndFetch(paidSourceUrl, {
         sessionId: task.sessionId,
         agent: "AcademicAgent",
@@ -104,7 +103,7 @@ export async function executeAcademicAgent(
       });
 
       paidArticleData = paidRes.data;
-      paymentReceiptId = paidRes.paymentReceiptId;
+      paymentReceiptId = paidRes.receipt?.id || paidRes.paymentReceiptId || null;
 
       // Inject paid content into search results context for extraction
       if (paidArticleData && typeof paidArticleData === "object") {
@@ -115,6 +114,8 @@ export async function executeAcademicAgent(
           snippet: (paidArticleData as any).fullText || (paidArticleData as any).abstract || "",
         });
       }
+    } catch (err) {
+      console.warn(`[AcademicAgent] Paid fetch warning: ${(err as Error).message}. Falling back to free search path.`);
     }
   }
 

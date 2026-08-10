@@ -31,12 +31,31 @@ export function CreditWalletModal({ credits, onTopUp, trigger }: CreditWalletMod
   const [loading, setLoading] = useState(false);
   const [success, setSuccess] = useState(false);
 
-  async function handleTopUp() {
+  async function handleTopUp(useStripe = false) {
     if (!selected) return;
     setLoading(true);
     setSuccess(false);
 
     try {
+      if (useStripe) {
+        const res = await fetch("/api/stripe/checkout", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            userId: "default-user",
+            amountUsd: selected,
+            successUrl: `${window.location.origin}/?checkout=success`,
+            cancelUrl: `${window.location.origin}/?checkout=cancel`,
+          }),
+        });
+        const data = await res.json();
+        if (data.url) {
+          window.location.href = data.url;
+          return;
+        }
+      }
+
+      // Instant Topup Fallback or Default
       const res = await fetch("/api/wallet/topup", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -124,29 +143,40 @@ export function CreditWalletModal({ credits, onTopUp, trigger }: CreditWalletMod
             </div>
           </div>
 
-          {/* Action Button */}
+          {/* Action Buttons */}
           {success ? (
             <div className="flex items-center justify-center gap-2 rounded-lg bg-emerald-500/10 border border-emerald-500/30 p-3 text-emerald-400">
               <CheckCircle2 className="h-5 w-5" />
               <span className="font-medium">Top-up successful!</span>
             </div>
           ) : (
-            <Button
-              onClick={handleTopUp}
-              disabled={!selected || loading}
-              className="w-full bg-emerald-600 hover:bg-emerald-500 text-white cursor-pointer transition-colors duration-200"
-            >
-              {loading ? (
-                <Loader2 className="h-4 w-4 animate-spin mr-2" />
-              ) : (
-                <Plus className="h-4 w-4 mr-2" />
-              )}
-              {loading
-                ? "Processing..."
-                : selected
-                  ? `Add $${selected.toFixed(2)} Credits`
-                  : "Select an amount"}
-            </Button>
+            <div className="space-y-2">
+              <Button
+                onClick={() => handleTopUp(true)}
+                disabled={!selected || loading}
+                className="w-full bg-emerald-600 hover:bg-emerald-500 text-white cursor-pointer transition-colors duration-200"
+              >
+                {loading ? (
+                  <Loader2 className="h-4 w-4 animate-spin mr-2" />
+                ) : (
+                  <Plus className="h-4 w-4 mr-2" />
+                )}
+                {loading
+                  ? "Redirecting to Stripe..."
+                  : selected
+                    ? `Pay $${selected.toFixed(2)} via Stripe Checkout`
+                    : "Select an amount"}
+              </Button>
+
+              <Button
+                variant="outline"
+                onClick={() => handleTopUp(false)}
+                disabled={!selected || loading}
+                className="w-full border-border/30 hover:bg-muted/30 text-xs cursor-pointer"
+              >
+                Instant Test Top-Up (Skip Stripe)
+              </Button>
+            </div>
           )}
 
           <p className="text-xs text-center text-muted-foreground">

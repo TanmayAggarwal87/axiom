@@ -76,7 +76,8 @@ export type SessionEventType =
   | "evidence_added"
   | "task_spawned"
   | "budget_capped"
-  | "report_generated";
+  | "report_generated"
+  | "task_failed";
 
 export type SessionEvent = {
   id: string;

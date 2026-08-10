@@ -1,11 +1,7 @@
-/**
- * Module 3 Integration Boundary for x402 Paid Resources.
- * 
- * Module 3 implements the x402 payment client wrapping fetch to handle 402 -> sign -> retry -> 200 flow.
- * Academic Agent uses this interface when fetching a paid/paywalled academic resource.
- */
+import type { PaymentReceipt } from "@/types/shared";
+
 export interface PaidFetcher {
-  payAndFetch(
+  payAndFetch<T = any>(
     url: string,
     options: {
       sessionId: string;
@@ -13,7 +9,9 @@ export interface PaidFetcher {
       purpose: string;
     }
   ): Promise<{
-    data: unknown;
-    paymentReceiptId: string;
+    data: T;
+    receipt?: PaymentReceipt | null;
+    paymentReceiptId?: string | null;
+    response?: Response;
   }>;
 }

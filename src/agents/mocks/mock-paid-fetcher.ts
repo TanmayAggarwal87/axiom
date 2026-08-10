@@ -7,10 +7,10 @@ import type { PaidFetcher } from "../adapters/paid-fetcher";
 export class MockPaidFetcher implements PaidFetcher {
   private mockReceiptCounter = 1;
 
-  async payAndFetch(
+  async payAndFetch<T = any>(
     url: string,
     options: { sessionId: string; agent: string; purpose: string }
-  ): Promise<{ data: unknown; paymentReceiptId: string }> {
+  ): Promise<{ data: T; paymentReceiptId: string }> {
     const mockReceiptId = `dev_mock_receipt_${Date.now()}_${this.mockReceiptCounter++}`;
 
     console.log(
@@ -28,7 +28,7 @@ export class MockPaidFetcher implements PaidFetcher {
           "Detailed experimental methodology and full clinical dataset retrieved via mock paid access channel.",
         doi: "10.1016/j.jep.2023.116543",
         isPaidContent: true,
-      },
+      } as unknown as T,
     };
   }
 }

@@ -7,7 +7,7 @@ import { Claim, Evidence, SessionBudget } from "@/types/shared";
 import { isAddress } from "viem";
 
 // Set valid environment variables for local integration testing
-process.env.NODE_ENV="test"
+(process.env as any).NODE_ENV = "test";
 process.env.TREASURY_PRIVATE_KEY = "0x0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef";
 process.env.STRIPE_SECRET_KEY = "sk_test_valid_mock_key_for_testing";
 process.env.STRIPE_WEBHOOK_SECRET = "whsec_valid_mock_secret_for_testing";

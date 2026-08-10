@@ -14,7 +14,7 @@ function isMockAllowed(): boolean {
 }
 
 function getApiKey(): string {
-  const key = process.env.GEMINI_API_KEY;
+  const key = process.env.GEMINI_API_KEY_2;
   if (!key) {
     if (isMockAllowed()) {
       return "";

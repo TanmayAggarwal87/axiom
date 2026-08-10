@@ -4,7 +4,7 @@ import { MockStateWriter } from "../mocks/mock-state-writer";
 import type { Task } from "../types";
 
 // Ensure mock mode is active for dev test execution if API keys are missing
-if (!process.env.GEMINI_API_KEY || !process.env.TAVILY_API_KEY) {
+if (!process.env.GEMINI_API_KEY_2 || !process.env.TAVILY_API_KEY) {
   process.env.ALLOW_MOCKS = "true";
 }
 

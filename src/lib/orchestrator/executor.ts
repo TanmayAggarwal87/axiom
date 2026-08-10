@@ -1,6 +1,9 @@
 import { runAgent } from "../../agents/run-agent";
 import { getSessionState, insertEvent } from "../supabase/db";
-import type { Task, TaskResult, SessionState, SessionEvent } from "./types";
+import { payAndFetch } from "../x402/payAndFetch";
+import { runFactChecker } from "../agents/factChecker";
+import { compileReport } from "../report/compiler";
+import type { Task, TaskResult, SessionState, SessionEvent, Evidence, Claim } from "./types";
 
 // A clean interface for StateWriter that emits events to Supabase DB
 class SupabaseStateWriter {
@@ -10,8 +13,45 @@ class SupabaseStateWriter {
   }
 
   async submitTaskResult(task: Task, result: TaskResult): Promise<void> {
+    // If gathering agent returned findings, convert them to Evidence & Claim events
+    const data = result.data as any;
+    if (data?.findings && Array.isArray(data.findings)) {
+      for (const f of data.findings) {
+        if (f.claim && f.source) {
+          const evId = `ev_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`;
+          const evidenceObj: Evidence = {
+            id: evId,
+            sessionId: this.sessionId,
+            claim: f.claim,
+            source: f.source,
+            agent: task.type,
+            confidence: task.type === "academic" ? 0.9 : task.type === "safety" ? 0.85 : 0.7,
+          };
+
+          const claimId = `claim_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`;
+          const claimObj: Claim = {
+            id: claimId,
+            sessionId: this.sessionId,
+            text: f.claim,
+            status: "supported",
+            evidenceIds: [evId],
+            supportedText: f.claim,
+          };
+
+          const evEvent: SessionEvent = {
+            id: `evt-ev-${Date.now()}-${Math.random().toString(36).substring(2, 7)}`,
+            sessionId: this.sessionId,
+            type: "evidence_added",
+            payload: { evidence: evidenceObj, claim: claimObj },
+            createdAt: new Date().toISOString(),
+          };
+          await insertEvent(this.sessionId, evEvent);
+        }
+      }
+    }
+
     const event: SessionEvent = {
-      id: `evt-task-done-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`,
+      id: `evt-task-done-${Date.now()}-${Math.random().toString(36).substring(2, 9)}`,
       sessionId: this.sessionId,
       type: "task_completed",
       payload: {
@@ -56,7 +96,7 @@ export async function executeSession(sessionId: string): Promise<SessionState> {
     const launchPromises = readyTasks.map(async (task) => {
       // 1. Mark task as started
       const startEvent: SessionEvent = {
-        id: `evt-task-start-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`,
+        id: `evt-task-start-${Date.now()}-${Math.random().toString(36).substring(2, 9)}`,
         sessionId,
         type: "task_started",
         payload: { taskId: task.id },
@@ -69,22 +109,45 @@ export async function executeSession(sessionId: string): Promise<SessionState> {
 
         // 2. Dispatch based on type
         if (task.type === "search" || task.type === "academic" || task.type === "safety") {
-          // Execute using Module 2 Agents
-          result = await runAgent(task, { stateWriter });
+          // Execute using Module 2 Agents with real x402 payAndFetch
+          result = await runAgent(task, {
+            stateWriter,
+            paidFetcher: {
+              payAndFetch: async <T = any>(url: string, opts: any) => {
+                const res = await payAndFetch<T>(url, opts);
+                if (res.receipt) {
+                  const payEv: SessionEvent = {
+                    id: `evt-pay-${Date.now()}-${Math.random().toString(36).substring(2, 7)}`,
+                    sessionId,
+                    type: "payment_made",
+                    payload: res.receipt,
+                    createdAt: new Date().toISOString(),
+                  };
+                  await insertEvent(sessionId, payEv);
+                }
+                return {
+                  data: res.data,
+                  receipt: res.receipt,
+                  paymentReceiptId: res.receipt?.id || null,
+                  response: res.response,
+                };
+              },
+            },
+          });
         } else if (task.type === "factcheck") {
-          // Fact-Checker (Module 3). Let's implement a simple local default factcheck
-          result = await executeFactCheckAgent(sessionId, task, stateWriter);
+          // Fact-Checker (Module 3)
+          result = await executeFactCheckAgent(sessionId, task);
         } else if (task.type === "synthesize") {
-          // Synthesizer (Module 1 default owner)
-          result = await executeSynthesizerAgent(sessionId, task, stateWriter);
+          // Synthesizer (Module 1/2)
+          result = await executeSynthesizerAgent(sessionId, task);
         } else if (task.type === "compile") {
-          // Compile (Module 4)
-          result = await executeCompilerAgent(sessionId, task, stateWriter);
+          // Report Compiler (Module 4)
+          result = await executeCompilerAgent(sessionId, task);
         } else {
           throw new Error(`Unsupported task type: ${task.type}`);
         }
 
-        // 3. Mark task completed (if not already handled by stateWriter inside runAgent)
+        // 3. Mark task completed (if not already handled by stateWriter)
         const currentState = await getSessionState(sessionId);
         const currentTask = currentState?.tasks.find((t) => t.id === task.id);
         if (currentTask && currentTask.status !== "done") {
@@ -93,9 +156,9 @@ export async function executeSession(sessionId: string): Promise<SessionState> {
       } catch (error: any) {
         console.error(`[Executor] Task ${task.id} (${task.type}) failed:`, error);
         const failEvent: SessionEvent = {
-          id: `evt-task-fail-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`,
+          id: `evt-task-fail-${Date.now()}-${Math.random().toString(36).substring(2, 9)}`,
           sessionId,
-          type: "task_failed" as any,
+          type: "task_failed",
           payload: { taskId: task.id, error: error?.message || "Execution failed" },
           createdAt: new Date().toISOString(),
         };
@@ -108,131 +171,148 @@ export async function executeSession(sessionId: string): Promise<SessionState> {
 }
 
 /**
- * Fallback / local implementation of Fact-Checker Agent (Module 3)
+ * Real implementation of Fact-Checker Agent (Module 3)
  */
 async function executeFactCheckAgent(
   sessionId: string,
-  task: Task,
-  stateWriter: SupabaseStateWriter
+  task: Task
 ): Promise<TaskResult> {
   const state = await getSessionState(sessionId);
   if (!state) throw new Error("Session state not found");
 
-  console.log(`[Fact-Checker] Checking claims against ${state.evidence.length} pieces of evidence.`);
-
-  // Find all claims
-  // (In real flow, Module 3 calls an LLM to evaluate claims)
-  // Let's create mock claims with high/low confidence depending on evidence count.
-  const claims = state.claims;
-  if (claims.length === 0) {
-    claims.push({
-      id: `claim-1`,
-      sessionId,
-      text: "Neem bioactive compounds are effective against certain skin conditions.",
-      status: "supported",
-      evidenceIds: state.evidence.map((e) => e.id),
-      supportedText: "Neem extracts show therapeutic potential in dermatological conditions.",
-    });
-  }
-
-  // To simulate the loop and tests: "fact-check iteration limit cannot exceed 2"
-  // Let's check how many times factchecker ran by counting events or task records.
   const factcheckTasks = state.tasks.filter((t) => t.type === "factcheck");
-  const iterationCount = factcheckTasks.length;
+  const currentIteration = factcheckTasks.length;
+  const dynamicTasksSpawned = state.tasks.filter((t) => t.createdBy === "factchecker").length;
 
-  // If we have under 2 iterations and we can spawn dynamic tasks, let's spawn one if budget allows.
-  const dynamicTasks = state.tasks.filter((t) => t.createdBy === "factchecker");
-  const maxDynamic = state.budget?.maxDynamicTasks ?? 3;
+  const verificationEndpoint = process.env.NEXT_PUBLIC_APP_URL
+    ? `${process.env.NEXT_PUBLIC_APP_URL}/api/x402-resource`
+    : "http://localhost:3000/api/x402-resource";
 
-  if (iterationCount < 2 && dynamicTasks.length < maxDynamic) {
-    // Spawn a search task
-    const spawnId = `spawned-task-${Date.now()}`;
-    const spawnedTask: Task = {
-      id: spawnId,
+  const fcResult = await runFactChecker({
+    sessionId,
+    claims: state.claims,
+    evidence: state.evidence,
+    budget: state.budget || undefined,
+    verificationEndpoint,
+    currentIteration,
+    dynamicTasksSpawned,
+  });
+
+  // Write any payment receipts generated by fact-checker to event log
+  for (const rcpt of fcResult.receipts) {
+    const payEv: SessionEvent = {
+      id: `evt-pay-${Date.now()}-${Math.random().toString(36).substring(2, 7)}`,
       sessionId,
-      type: "search",
-      input: "Specific targeted query about Neem side effects on renal function",
-      dependsOn: [],
-      status: "ready",
-      createdBy: "factchecker",
-      result: null,
-    };
-
-    const spawnEvent: SessionEvent = {
-      id: `evt-spawn-${Date.now()}`,
-      sessionId,
-      type: "task_spawned",
-      payload: spawnedTask,
+      type: "payment_made",
+      payload: rcpt,
       createdAt: new Date().toISOString(),
     };
-    await insertEvent(sessionId, spawnEvent);
+    await insertEvent(sessionId, payEv);
   }
 
-  const result: TaskResult = {
+  // Write new evidence to event log
+  for (const ev of fcResult.newEvidence) {
+    const evEv: SessionEvent = {
+      id: `evt-ev-${Date.now()}-${Math.random().toString(36).substring(2, 7)}`,
+      sessionId,
+      type: "evidence_added",
+      payload: { evidence: ev },
+      createdAt: new Date().toISOString(),
+    };
+    await insertEvent(sessionId, evEv);
+  }
+
+  // Write spawned tasks to event log
+  for (const spawned of fcResult.spawnedTasks) {
+    const spawnEv: SessionEvent = {
+      id: `evt-spawn-${Date.now()}-${Math.random().toString(36).substring(2, 7)}`,
+      sessionId,
+      type: "task_spawned",
+      payload: spawned,
+      createdAt: new Date().toISOString(),
+    };
+    await insertEvent(sessionId, spawnEv);
+  }
+
+  return {
     taskId: task.id,
     data: {
-      claims,
-      iterationCount,
+      claims: fcResult.claims,
+      iterationsUsed: fcResult.iterationsUsed,
+      capReached: fcResult.capReached,
     },
     sources: [],
-    paymentReceiptId: null,
+    paymentReceiptId: fcResult.receipts[0]?.id || null,
   };
-
-  return result;
 }
 
 /**
- * Fallback / local implementation of Synthesizer Agent (Module 1 Default)
+ * Real implementation of Synthesizer Agent (Gemini driven)
  */
 async function executeSynthesizerAgent(
   sessionId: string,
-  task: Task,
-  stateWriter: SupabaseStateWriter
+  task: Task
 ): Promise<TaskResult> {
   const state = await getSessionState(sessionId);
   if (!state) throw new Error("Session state not found");
 
-  const summary = `Synthesized report for research on query. Evaluated ${state.tasks.length} tasks and ${state.evidence.length} evidence sources. Status: claims verified.`;
+  const queryTask = state.tasks.find((t) => t.input);
+  const rawQuery = queryTask?.input || "Research topic";
 
-  const result: TaskResult = {
+  let summary = "";
+
+  if (process.env.GEMINI_API_KEY_3 && !process.env.GEMINI_API_KEY_3.includes("your-gemini")) {
+    try {
+      const prompt = `Synthesize a concise executive summary for research query: "${rawQuery}".
+Evidence gathered (${state.evidence.length} sources):
+${state.evidence.map((e) => `- ${e.claim} (Source: ${e.source.title}, Conf: ${e.confidence})`).join("\n")}
+
+Provide a coherent 2-3 paragraph summary.`;
+
+      const response = await fetch(
+        `https://generativelanguage.googleapis.com/v1beta/models/gemini-3.6-flash:generateContent?key=${process.env.GEMINI_API_KEY_3}`,
+        {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ contents: [{ parts: [{ text: prompt }] }] }),
+        }
+      );
+
+      if (response.ok) {
+        const json = await response.json();
+        summary = json?.candidates?.[0]?.content?.parts?.[0]?.text?.trim() || "";
+      }
+    } catch (err) {
+      console.warn("[Synthesizer] Gemini call fallback:", err);
+    }
+  }
+
+  if (!summary) {
+    summary = `Synthesized executive summary for research query: "${rawQuery}". Analyzed ${state.evidence.length} evidence records across search, academic, and safety streams. Verified ${state.claims.length} claims with total spent of $${(state.budget?.spentUsdc || 0).toFixed(4)} USDC on Base Sepolia.`;
+  }
+
+  return {
     taskId: task.id,
-    data: {
-      summary,
-    },
+    data: { summary },
     sources: [],
     paymentReceiptId: null,
   };
-
-  return result;
 }
 
 /**
- * Fallback / local implementation of Compiler Agent (Module 4)
+ * Real implementation of Compiler Agent (Module 4)
  */
 async function executeCompilerAgent(
   sessionId: string,
-  task: Task,
-  stateWriter: SupabaseStateWriter
+  task: Task
 ): Promise<TaskResult> {
   const state = await getSessionState(sessionId);
   if (!state) throw new Error("Session state not found");
 
-  const synthTask = state.tasks.find((t) => t.type === "synthesize");
-  const summary = (synthTask?.result?.data as any)?.summary || "No synthesis available";
+  const firstTask = state.tasks[0];
+  const query = firstTask?.input || "Research Topic";
 
-  const result: TaskResult = {
-    taskId: task.id,
-    data: {
-      compiledReport: {
-        title: "Axiom Research Compilation",
-        summary,
-        totalSpentUsdc: state.budget?.spentUsdc || 0,
-        sourcesCount: state.evidence.length,
-      },
-    },
-    sources: [],
-    paymentReceiptId: null,
-  };
+  const compiledReport = compileReport(state, query);
 
   // Log report_generated event
   const reportEvent: SessionEvent = {
@@ -244,5 +324,10 @@ async function executeCompilerAgent(
   };
   await insertEvent(sessionId, reportEvent);
 
-  return result;
+  return {
+    taskId: task.id,
+    data: { compiledReport },
+    sources: [],
+    paymentReceiptId: null,
+  };
 }
