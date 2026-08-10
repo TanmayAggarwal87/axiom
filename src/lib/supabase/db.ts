@@ -16,7 +16,7 @@ type InMemoryDB = {
 
 const inMemoryDb: InMemoryDB = {
   users: {
-    "default-user": { id: "default-user", email: "demo@axiom.org", credits: 100.0 },
+    "default-user": { id: "default-user", email: "demo@axiom.org", credits: 10.0 },
   },
   sessions: {},
   states: {},
@@ -31,20 +31,31 @@ if (!useRealSupabase) {
 
 /**
  * Ensures user exists. Used for dev and testing setup.
+ * Preserves existing user credits if user already exists.
  */
-export async function ensureUser(userId: string, email: string, credits: number = 100.0) {
+export async function ensureUser(userId: string, email: string, initialCredits: number = 10.0) {
   if (useRealSupabase && supabase) {
-    const { error } = await supabase.from("users").upsert({
-      id: userId,
-      email,
-      credits,
-    });
-    if (error) {
-      console.error("[Supabase DB] Error upserting user:", error);
-      throw error;
+    const { data: existingUser } = await supabase
+      .from("users")
+      .select("id")
+      .eq("id", userId)
+      .single();
+
+    if (!existingUser) {
+      const { error } = await supabase.from("users").insert({
+        id: userId,
+        email,
+        credits: initialCredits,
+      });
+      if (error) {
+        console.error("[Supabase DB] Error inserting new user:", error);
+        throw error;
+      }
     }
   } else {
-    inMemoryDb.users[userId] = { id: userId, email, credits };
+    if (!inMemoryDb.users[userId]) {
+      inMemoryDb.users[userId] = { id: userId, email, credits: initialCredits };
+    }
   }
 }
 
@@ -319,10 +330,13 @@ export async function insertEvent(sessionId: string, event: SessionEvent): Promi
             })
             .eq("id", payload.taskId);
 
-          // Update any other tasks that became "ready"
+          // Update tasks that transitioned from pending→ready (NEVER overwrite running/done/failed)
           for (const t of nextState.tasks) {
             if (t.status === "ready") {
-              await supabase.from("tasks").update({ status: "ready" }).eq("id", t.id);
+              await supabase.from("tasks")
+                .update({ status: "ready" })
+                .eq("id", t.id)
+                .eq("status", "pending"); // Guard: only pending→ready promotion
             }
           }
 
@@ -394,7 +408,7 @@ export async function insertEvent(sessionId: string, event: SessionEvent): Promi
           }
 
           if (evidenceObj) {
-            await supabase.from("evidence").insert({
+            await supabase.from("evidence").upsert({
               id: evidenceObj.id,
               session_id: sessionId,
               claim: evidenceObj.claim,
@@ -421,7 +435,7 @@ export async function insertEvent(sessionId: string, event: SessionEvent): Promi
           const task = event.payload as Task;
           const currentDynamicTasks = nextState.tasks.filter((t) => t.createdBy === "factchecker").length;
           const limit = nextState.budget?.maxDynamicTasks ?? 3;
-          if (currentDynamicTasks <= limit) {
+          if (currentDynamicTasks < limit) { // Fixed: was <= (off-by-one)
             await supabase.from("tasks").insert({
               id: task.id,
               session_id: sessionId,
@@ -433,10 +447,13 @@ export async function insertEvent(sessionId: string, event: SessionEvent): Promi
               result: task.result,
             });
 
-            // Update any tasks that changed status (e.g. if newly spawned tasks are ready or pending)
+            // Only promote pending→ready, never overwrite running/done/failed
             for (const t of nextState.tasks) {
               if (t.status === "ready") {
-                await supabase.from("tasks").update({ status: "ready" }).eq("id", t.id);
+                await supabase.from("tasks")
+                  .update({ status: "ready" })
+                  .eq("id", t.id)
+                  .eq("status", "pending"); // Guard: only pending→ready
               }
             }
           }

@@ -1,5 +1,5 @@
-import type { SessionState } from "@/lib/orchestrator/types";
-import type { Evidence, Claim, PaymentReceipt, SourceRef } from "@/types/shared";
+import type { SessionState } from "../orchestrator/types";
+import type { Evidence, Claim, PaymentReceipt, SourceRef } from "../../types/shared";
 
 // ─── Compiled Report Shape ─────────────────────────────────────────────────────
 

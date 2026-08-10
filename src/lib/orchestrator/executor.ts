@@ -5,7 +5,44 @@ import { runFactChecker } from "../agents/factChecker";
 import { compileReport } from "../report/compiler";
 import type { Task, TaskResult, SessionState, SessionEvent, Evidence, Claim } from "./types";
 
-// A clean interface for StateWriter that emits events to Supabase DB
+// ─── Circuit Breaker Defaults ──────────────────────────────────────────────
+const MAX_SESSION_WALL_CLOCK_MS = parseInt(process.env.MAX_SESSION_WALL_CLOCK_MS || "120000", 10); // 120s
+const MAX_LLM_CALLS_PER_SESSION = parseInt(process.env.MAX_LLM_CALLS || "25", 10);
+const MAX_TAVILY_CALLS_PER_SESSION = parseInt(process.env.MAX_TAVILY_CALLS || "15", 10);
+const MAX_LOOP_ITERATIONS = parseInt(process.env.MAX_LOOP_ITERATIONS || "50", 10);
+
+const DEBUG = process.env.DEBUG_ORCHESTRATOR === "true";
+
+function debugLog(...args: unknown[]) {
+  if (DEBUG) console.log("[DEBUG_ORCHESTRATOR]", ...args);
+}
+
+// ─── Session-level call counters (shared across one executeSession invocation) ──
+type SessionCounters = {
+  llmCalls: number;
+  tavilyCalls: number;
+  loopIterations: number;
+  startTime: number;
+};
+
+function checkCircuitBreaker(counters: SessionCounters, sessionId: string): string | null {
+  const elapsed = Date.now() - counters.startTime;
+  if (elapsed > MAX_SESSION_WALL_CLOCK_MS) {
+    return `Wall-clock timeout: ${elapsed}ms > ${MAX_SESSION_WALL_CLOCK_MS}ms`;
+  }
+  if (counters.llmCalls > MAX_LLM_CALLS_PER_SESSION) {
+    return `LLM call limit: ${counters.llmCalls} > ${MAX_LLM_CALLS_PER_SESSION}`;
+  }
+  if (counters.tavilyCalls > MAX_TAVILY_CALLS_PER_SESSION) {
+    return `Tavily call limit: ${counters.tavilyCalls} > ${MAX_TAVILY_CALLS_PER_SESSION}`;
+  }
+  if (counters.loopIterations > MAX_LOOP_ITERATIONS) {
+    return `Loop iteration limit: ${counters.loopIterations} > ${MAX_LOOP_ITERATIONS}`;
+  }
+  return null;
+}
+
+// ─── State Writer (executor-owned, not passed to agents) ────────────────────
 class SupabaseStateWriter {
   private sessionId: string;
   constructor(sessionId: string) {
@@ -65,12 +102,157 @@ class SupabaseStateWriter {
 }
 
 /**
+ * Gracefully terminate a session: mark all non-terminal tasks as failed,
+ * log a budget_capped event with the reason.
+ */
+async function gracefulShutdown(
+  sessionId: string,
+  reason: string,
+  counters: SessionCounters
+): Promise<SessionState> {
+  console.warn(`[Executor] CIRCUIT BREAKER TRIPPED for session ${sessionId}: ${reason}`);
+  debugLog("Circuit breaker details:", {
+    reason,
+    llmCalls: counters.llmCalls,
+    tavilyCalls: counters.tavilyCalls,
+    loopIterations: counters.loopIterations,
+    elapsedMs: Date.now() - counters.startTime,
+  });
+
+  // Log budget_capped event
+  const capEvent: SessionEvent = {
+    id: `evt-cap-${Date.now()}-${Math.random().toString(36).substring(2, 9)}`,
+    sessionId,
+    type: "budget_capped",
+    payload: {
+      reason,
+      llmCalls: counters.llmCalls,
+      tavilyCalls: counters.tavilyCalls,
+      loopIterations: counters.loopIterations,
+      elapsedMs: Date.now() - counters.startTime,
+      maxFactCheckIterations: 0, // caps zeroed to prevent further work
+      maxDynamicTasks: 0,
+    },
+    createdAt: new Date().toISOString(),
+  };
+  await insertEvent(sessionId, capEvent);
+
+  // Fail all non-terminal tasks
+  const state = await getSessionState(sessionId);
+  if (state) {
+    for (const task of state.tasks) {
+      if (task.status !== "done" && task.status !== "failed") {
+        const failEvent: SessionEvent = {
+          id: `evt-task-fail-cb-${Date.now()}-${Math.random().toString(36).substring(2, 9)}`,
+          sessionId,
+          type: "task_failed",
+          payload: { taskId: task.id, error: `Circuit breaker: ${reason}` },
+          createdAt: new Date().toISOString(),
+        };
+        await insertEvent(sessionId, failEvent);
+      }
+    }
+  }
+
+  // Try to run synthesize + compile with whatever evidence exists
+  try {
+    await runSynthesizeAndCompile(sessionId);
+  } catch (err) {
+    console.error("[Executor] Failed to run synthesis after circuit breaker:", err);
+  }
+
+  return (await getSessionState(sessionId))!;
+}
+
+/**
+ * Run synthesize + compile tasks if they haven't already run.
+ * Used both in normal flow (when factcheck finishes) and in graceful shutdown.
+ */
+async function runSynthesizeAndCompile(sessionId: string): Promise<void> {
+  const state = await getSessionState(sessionId);
+  if (!state) return;
+
+  const stateWriter = new SupabaseStateWriter(sessionId);
+
+  // Find synthesize task — if it exists and hasn't run, execute it
+  const synthTask = state.tasks.find((t) => t.type === "synthesize" && t.status !== "done" && t.status !== "failed");
+  if (synthTask) {
+    const startEvent: SessionEvent = {
+      id: `evt-task-start-${Date.now()}-${Math.random().toString(36).substring(2, 9)}`,
+      sessionId,
+      type: "task_started",
+      payload: { taskId: synthTask.id },
+      createdAt: new Date().toISOString(),
+    };
+    await insertEvent(sessionId, startEvent);
+
+    try {
+      const result = await executeSynthesizerAgent(sessionId, synthTask);
+      await stateWriter.submitTaskResult(synthTask, result);
+    } catch (err) {
+      const failEvent: SessionEvent = {
+        id: `evt-task-fail-${Date.now()}-${Math.random().toString(36).substring(2, 9)}`,
+        sessionId,
+        type: "task_failed",
+        payload: { taskId: synthTask.id, error: (err as Error).message },
+        createdAt: new Date().toISOString(),
+      };
+      await insertEvent(sessionId, failEvent);
+    }
+  }
+
+  // Same for compile task
+  const freshState = await getSessionState(sessionId);
+  if (!freshState) return;
+  const compileTask = freshState.tasks.find((t) => t.type === "compile" && t.status !== "done" && t.status !== "failed");
+  if (compileTask) {
+    const startEvent: SessionEvent = {
+      id: `evt-task-start-${Date.now()}-${Math.random().toString(36).substring(2, 9)}`,
+      sessionId,
+      type: "task_started",
+      payload: { taskId: compileTask.id },
+      createdAt: new Date().toISOString(),
+    };
+    await insertEvent(sessionId, startEvent);
+
+    try {
+      const result = await executeCompilerAgent(sessionId, compileTask);
+      await stateWriter.submitTaskResult(compileTask, result);
+    } catch (err) {
+      const failEvent: SessionEvent = {
+        id: `evt-task-fail-${Date.now()}-${Math.random().toString(36).substring(2, 9)}`,
+        sessionId,
+        type: "task_failed",
+        payload: { taskId: compileTask.id, error: (err as Error).message },
+        createdAt: new Date().toISOString(),
+      };
+      await insertEvent(sessionId, failEvent);
+    }
+  }
+}
+
+/**
  * Main Task Executor. Resolves dependencies and executes tasks in parallel.
+ * Includes circuit breakers for wall-clock time, LLM calls, Tavily calls, and loop iterations.
  */
 export async function executeSession(sessionId: string): Promise<SessionState> {
   const stateWriter = new SupabaseStateWriter(sessionId);
+  const counters: SessionCounters = {
+    llmCalls: 0,
+    tavilyCalls: 0,
+    loopIterations: 0,
+    startTime: Date.now(),
+  };
 
   while (true) {
+    counters.loopIterations++;
+
+    // Check circuit breaker at the top of every loop iteration
+    const breakerReason = checkCircuitBreaker(counters, sessionId);
+    if (breakerReason) {
+      return gracefulShutdown(sessionId, breakerReason, counters);
+    }
+
     const state = await getSessionState(sessionId);
     if (!state) {
       throw new Error(`Session ${sessionId} not found`);
@@ -80,8 +262,20 @@ export async function executeSession(sessionId: string): Promise<SessionState> {
     const readyTasks = tasks.filter((t) => t.status === "ready");
     const runningTasks = tasks.filter((t) => t.status === "running");
 
+    debugLog(`Loop iteration #${counters.loopIterations} | tasks:`, {
+      total: tasks.length,
+      pending: tasks.filter((t) => t.status === "pending").length,
+      ready: readyTasks.length,
+      running: runningTasks.length,
+      done: tasks.filter((t) => t.status === "done").length,
+      failed: tasks.filter((t) => t.status === "failed").length,
+      llmCalls: counters.llmCalls,
+      tavilyCalls: counters.tavilyCalls,
+    });
+
     // If no tasks are ready and none are running, we are done (or stuck)
     if (readyTasks.length === 0 && runningTasks.length === 0) {
+      debugLog("No ready or running tasks — exiting loop.");
       return state;
     }
 
@@ -91,9 +285,50 @@ export async function executeSession(sessionId: string): Promise<SessionState> {
       continue;
     }
 
+    // --- Check if gathering agents are all done and factcheck hasn't been injected yet ---
+    const gatheringTypes = ["search", "academic", "safety"];
+    const gatheringTasks = tasks.filter((t) => gatheringTypes.includes(t.type));
+    const allGatheringDone = gatheringTasks.length > 0 && gatheringTasks.every((t) => t.status === "done" || t.status === "failed");
+    const hasFactcheck = tasks.some((t) => t.type === "factcheck");
+
+    if (allGatheringDone && !hasFactcheck) {
+      debugLog("All gathering agents done, injecting factcheck task.");
+      const synthTask = tasks.find((t) => t.type === "synthesize");
+      const factcheckTask: Task = {
+        id: `task-factcheck-${Date.now()}`,
+        sessionId,
+        type: "factcheck",
+        input: "Verify all claims gathered by search, academic, and safety agents.",
+        dependsOn: gatheringTasks.filter((t) => t.status === "done").map((t) => t.id),
+        status: "ready", // All deps are done, so it's ready
+        createdBy: "orchestrator",
+        result: null,
+      };
+
+      const spawnEvent: SessionEvent = {
+        id: `evt-spawn-fc-${Date.now()}-${Math.random().toString(36).substring(2, 9)}`,
+        sessionId,
+        type: "task_spawned",
+        payload: factcheckTask,
+        createdAt: new Date().toISOString(),
+      };
+      await insertEvent(sessionId, spawnEvent);
+
+      // Update synthesize task to also depend on factcheck
+      if (synthTask && synthTask.status === "pending") {
+        // We can't modify dependsOn directly in DB easily, so synthesize will be promoted
+        // when factcheck completes via the reducer's updatePendingTasks
+        debugLog("Synthesize task will wait for factcheck via dependency update.");
+      }
+
+      continue; // Re-enter loop to pick up the new factcheck task
+    }
+
     // Launch all ready tasks in parallel
     console.log(`[Executor] Launching ${readyTasks.length} ready tasks for session ${sessionId}...`);
     const launchPromises = readyTasks.map(async (task) => {
+      debugLog(`Dispatching task ${task.id} (${task.type}), createdBy=${task.createdBy}`);
+
       // 1. Mark task as started
       const startEvent: SessionEvent = {
         id: `evt-task-start-${Date.now()}-${Math.random().toString(36).substring(2, 9)}`,
@@ -109,9 +344,12 @@ export async function executeSession(sessionId: string): Promise<SessionState> {
 
         // 2. Dispatch based on type
         if (task.type === "search" || task.type === "academic" || task.type === "safety") {
-          // Execute using Module 2 Agents with real x402 payAndFetch
+          // Track API calls: each gathering agent does 1 Gemini refine + 1 Tavily search + 1 Gemini extract = 2 LLM + 1 Tavily
+          counters.llmCalls += 2;
+          counters.tavilyCalls += 1;
+
+          // Execute using Module 2 Agents — NO stateWriter passed (executor handles state)
           result = await runAgent(task, {
-            stateWriter,
             paidFetcher: {
               payAndFetch: async <T = any>(url: string, opts: any) => {
                 const res = await payAndFetch<T>(url, opts);
@@ -133,12 +371,15 @@ export async function executeSession(sessionId: string): Promise<SessionState> {
                 };
               },
             },
+            // NOTE: No stateWriter — executor handles submitTaskResult exclusively
           });
         } else if (task.type === "factcheck") {
           // Fact-Checker (Module 3)
+          counters.llmCalls += 1; // Gemini hedging call
           result = await executeFactCheckAgent(sessionId, task);
         } else if (task.type === "synthesize") {
-          // Synthesizer (Module 1/2)
+          // Synthesizer
+          counters.llmCalls += 1;
           result = await executeSynthesizerAgent(sessionId, task);
         } else if (task.type === "compile") {
           // Report Compiler (Module 4)
@@ -147,14 +388,12 @@ export async function executeSession(sessionId: string): Promise<SessionState> {
           throw new Error(`Unsupported task type: ${task.type}`);
         }
 
-        // 3. Mark task completed (if not already handled by stateWriter)
-        const currentState = await getSessionState(sessionId);
-        const currentTask = currentState?.tasks.find((t) => t.id === task.id);
-        if (currentTask && currentTask.status !== "done") {
-          await stateWriter.submitTaskResult(task, result);
-        }
+        // 3. Executor exclusively marks task completed — no double-dispatch
+        debugLog(`Task ${task.id} (${task.type}) completed, writing result.`);
+        await stateWriter.submitTaskResult(task, result);
       } catch (error: any) {
         console.error(`[Executor] Task ${task.id} (${task.type}) failed:`, error);
+        debugLog(`Task ${task.id} FAILED:`, error?.message);
         const failEvent: SessionEvent = {
           id: `evt-task-fail-${Date.now()}-${Math.random().toString(36).substring(2, 9)}`,
           sessionId,
@@ -184,6 +423,15 @@ async function executeFactCheckAgent(
   const currentIteration = factcheckTasks.length;
   const dynamicTasksSpawned = state.tasks.filter((t) => t.createdBy === "factchecker").length;
 
+  debugLog("Fact-checker invoked:", {
+    currentIteration,
+    dynamicTasksSpawned,
+    maxFactCheckIterations: state.budget?.maxFactCheckIterations,
+    maxDynamicTasks: state.budget?.maxDynamicTasks,
+    claimsCount: state.claims.length,
+    evidenceCount: state.evidence.length,
+  });
+
   const verificationEndpoint = process.env.NEXT_PUBLIC_APP_URL
     ? `${process.env.NEXT_PUBLIC_APP_URL}/api/x402-resource`
     : "http://localhost:3000/api/x402-resource";
@@ -196,6 +444,14 @@ async function executeFactCheckAgent(
     verificationEndpoint,
     currentIteration,
     dynamicTasksSpawned,
+  });
+
+  debugLog("Fact-checker result:", {
+    iterationsUsed: fcResult.iterationsUsed,
+    capReached: fcResult.capReached,
+    newEvidenceCount: fcResult.newEvidence.length,
+    receiptsCount: fcResult.receipts.length,
+    spawnedTasksCount: fcResult.spawnedTasks.length,
   });
 
   // Write any payment receipts generated by fact-checker to event log
@@ -261,7 +517,8 @@ async function executeSynthesizerAgent(
 
   let summary = "";
 
-  if (process.env.GEMINI_API_KEY_3 && !process.env.GEMINI_API_KEY_3.includes("your-gemini")) {
+  const apiKey = process.env.GEMINI_API_KEY_3 || process.env.GEMINI_API_KEY;
+  if (apiKey && !apiKey.includes("your-gemini")) {
     try {
       const evidenceText = state.evidence
         .map((e) => `- Claim: "${e.claim}" (Source: ${e.source.title}, URL: ${e.source.url}, Confidence: ${e.confidence})`)
@@ -286,7 +543,7 @@ ${claimsText || "No claims recorded."}
 Provide a detailed, multi-paragraph synthesis.`;
 
       const response = await fetch(
-        `https://generativelanguage.googleapis.com/v1beta/models/gemini-3.6-flash:generateContent?key=${process.env.GEMINI_API_KEY_3}`,
+        `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key=${apiKey}`,
         {
           method: "POST",
           headers: { "Content-Type": "application/json" },

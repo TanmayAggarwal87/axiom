@@ -20,7 +20,7 @@ type AppPhase = "idle" | "running" | "completed";
 
 export default function Home() {
   const [phase, setPhase] = useState<AppPhase>("idle");
-  const [credits, setCredits] = useState<number>(100);
+  const [credits, setCredits] = useState<number>(10);
   const [sessionId, setSessionId] = useState<string | null>(null);
   const [sessionQuery, setSessionQuery] = useState("");
   const [completedState, setCompletedState] = useState<SessionState | null>(null);

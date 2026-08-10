@@ -1,5 +1,5 @@
 import { WalletClient } from "viem";
-import { PaymentReceipt } from "@/types/shared";
+import { PaymentReceipt } from "../../types/shared";
 import { getTreasuryWalletClient, DEFAULT_FACILITATOR_URL } from "./treasury";
 import { wrapFetchWithPayment } from "@x402/fetch";
 

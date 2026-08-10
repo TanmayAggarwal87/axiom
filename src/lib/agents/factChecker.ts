@@ -1,5 +1,5 @@
-import { Claim, Evidence, PaymentReceipt, SessionBudget, SourceRef, Task } from "@/types/shared";
-import { payAndFetch } from "@/lib/x402/payAndFetch";
+import { Claim, Evidence, PaymentReceipt, SessionBudget, SourceRef, Task } from "../../types/shared";
+import { payAndFetch } from "../x402/payAndFetch";
 import { GoogleGenAI } from "@google/genai";
 
 export type FactCheckerInput = {
@@ -209,25 +209,8 @@ export async function runFactChecker(input: FactCheckerInput): Promise<FactCheck
     }
   }
 
-  // Step 3: Polish text with Gemini if key is present
-  if (process.env.GEMINI_API_KEY_3 && !process.env.GEMINI_API_KEY_3.includes("your-gemini")) {
-    try {
-      const ai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY_3 });
-      for (const claim of currentClaims) {
-        if (claim.status === "partially_supported" && !claim.supportedText?.includes("hedged")) {
-          const response = await ai.models.generateContent({
-            model: "gemini-2.5-flash",
-            contents: `Rewrite this scientific claim to be accurately hedged and cautious based on partial evidence: "${claim.text}". Return only the hedged sentence.`,
-          });
-          if (response.text) {
-            claim.supportedText = response.text.trim();
-          }
-        }
-      }
-    } catch (err) {
-      console.warn(`Gemini LLM text hedging warning: ${(err as Error).message}. Preserving deterministic text.`);
-    }
-  }
+  // Step 3: Preserving deterministic claim hedging derived from mathematical confidence scoring.
+  // (Individual per-claim LLM loop removed to prevent API rate limit exhaustion).
 
   return {
     claims: currentClaims,

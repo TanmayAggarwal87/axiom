@@ -7,14 +7,14 @@ import {
   EXTRACT_FINDINGS_ACADEMIC_PROMPT,
 } from "./prompts";
 
-const GEMINI_MODEL = "gemini-3.6-flash";
+const GEMINI_MODEL = "gemini-2.0-flash";
 
 function isMockAllowed(): boolean {
   return process.env.ALLOW_MOCKS === "true" || process.env.NODE_ENV === "test";
 }
 
 function getApiKey(): string {
-  const key = process.env.GEMINI_API_KEY_2;
+  const key = process.env.GEMINI_API_KEY_2 || process.env.GEMINI_API_KEY;
   if (!key) {
     if (isMockAllowed()) {
       return "";
@@ -89,9 +89,15 @@ export async function refineQueryWithGemini(
   input: string,
   agentType: "search" | "academic" | "safety"
 ): Promise<string> {
+  const trimmed = input.trim();
+  // If the input is already a detailed query (> 15 chars or multi-word prompt from planner), use it directly
+  if (trimmed.length > 15 || trimmed.split(" ").length >= 4) {
+    return trimmed;
+  }
+
   const prompt = QUERY_REFINEMENT_PROMPT.replace("{{agentType}}", agentType).replace(
     "{{input}}",
-    input
+    trimmed
   );
 
   try {
@@ -106,7 +112,7 @@ export async function refineQueryWithGemini(
     console.warn("[Gemini] Query refinement error in mock mode, returning original input:", error);
   }
 
-  return input;
+  return trimmed;
 }
 
 export type ExtractedRawFinding = {

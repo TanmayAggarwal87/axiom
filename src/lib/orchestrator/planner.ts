@@ -1,13 +1,13 @@
 import type { Task } from "./types";
 
-const GEMINI_MODEL = "gemini-3.6-flash";
+const GEMINI_MODEL = "gemini-2.0-flash";
 
 function isMockAllowed(): boolean {
   return process.env.ALLOW_MOCKS === "true" || process.env.NODE_ENV === "test";
 }
 
 function getApiKey(): string {
-  const key = process.env.GEMINI_API_KEY_1;
+  const key = process.env.GEMINI_API_KEY_1 || process.env.GEMINI_API_KEY;
   if (!key) {
     if (isMockAllowed()) {
       return "";
@@ -138,7 +138,74 @@ CRITICAL RULES:
     throw new Error("Invalid planning: The plan must contain at least 'search', 'academic', and 'safety' tasks.");
   }
 
+  // Validate dependency references and detect cycles
+  validateDependencies(tasks);
+
   return tasks;
+}
+
+/**
+ * Validates that all dependsOn references exist and that there are no dependency cycles.
+ * Uses topological sort (Kahn's algorithm) to detect cycles.
+ * Throws immediately on invalid plans rather than letting the executor hang.
+ */
+function validateDependencies(tasks: Task[]): void {
+  const taskIds = new Set(tasks.map((t) => t.id));
+
+  // Check for dangling references
+  for (const task of tasks) {
+    for (const depId of task.dependsOn) {
+      if (!taskIds.has(depId)) {
+        throw new Error(
+          `Invalid plan: Task "${task.id}" depends on "${depId}" which does not exist in the plan.`
+        );
+      }
+    }
+  }
+
+  // Topological sort to detect cycles (Kahn's algorithm)
+  const inDegree = new Map<string, number>();
+  const adjacency = new Map<string, string[]>();
+
+  for (const task of tasks) {
+    inDegree.set(task.id, task.dependsOn.length);
+    if (!adjacency.has(task.id)) {
+      adjacency.set(task.id, []);
+    }
+    for (const depId of task.dependsOn) {
+      if (!adjacency.has(depId)) {
+        adjacency.set(depId, []);
+      }
+      adjacency.get(depId)!.push(task.id);
+    }
+  }
+
+  const queue: string[] = [];
+  for (const [id, deg] of inDegree) {
+    if (deg === 0) queue.push(id);
+  }
+
+  let sortedCount = 0;
+  while (queue.length > 0) {
+    const current = queue.shift()!;
+    sortedCount++;
+    for (const neighbor of adjacency.get(current) || []) {
+      const newDeg = (inDegree.get(neighbor) || 0) - 1;
+      inDegree.set(neighbor, newDeg);
+      if (newDeg === 0) queue.push(neighbor);
+    }
+  }
+
+  if (sortedCount !== tasks.length) {
+    const cycledTasks = tasks
+      .filter((t) => (inDegree.get(t.id) || 0) > 0)
+      .map((t) => `${t.id} (depends on: ${t.dependsOn.join(", ")})`)
+      .join("; ");
+    throw new Error(
+      `Invalid plan: Dependency cycle detected among tasks: ${cycledTasks}. ` +
+      `A plan with circular dependencies would hang forever.`
+    );
+  }
 }
 
 function getMockPlan(sessionId: string): any {
