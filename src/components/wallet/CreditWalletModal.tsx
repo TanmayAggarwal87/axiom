@@ -52,7 +52,7 @@ export function CreditWalletModal({
           body: JSON.stringify({
             userId: "default-user",
             amountUsd: selected,
-            successUrl: `${window.location.origin}/?checkout=success`,
+            successUrl: `${window.location.origin}/?checkout=success&session_id={CHECKOUT_SESSION_ID}`,
             cancelUrl: `${window.location.origin}/?checkout=cancel`,
           }),
         });

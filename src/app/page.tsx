@@ -48,9 +48,80 @@ export default function Home() {
     }
   }, []);
 
-  // 1. Initial fetch & Tab Focus / Visibility Change Fallback
+  // 1. Initial fetch + Stripe Checkout success detection + Tab Focus fallback
   useEffect(() => {
     refreshBalance();
+
+    // Detect Stripe redirect: /?checkout=success&session_id=cs_test_...
+    const params = new URLSearchParams(window.location.search);
+    if (params.get("checkout") === "success") {
+      const stripeSessionId = params.get("session_id");
+      // Clean the URL immediately so a refresh doesn't re-trigger this
+      window.history.replaceState({}, "", "/");
+
+      if (stripeSessionId) {
+        // Actively verify with Stripe and credit the user right now
+        (async () => {
+          try {
+            const res = await fetch("/api/stripe/verify-session", {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({
+                sessionId: stripeSessionId,
+                userId: "default-user",
+              }),
+            });
+            const data = await res.json();
+
+            if (data.success && typeof data.credits === "number") {
+              setCredits(data.credits);
+              toast.success("Credits added!", {
+                description: `Your balance is now $${data.credits.toFixed(2)} USDC`,
+              });
+            } else if (data.stripeNotConfigured) {
+              toast.info("Stripe not fully configured", {
+                description:
+                  "Use the 'Instant Test Top-Up' button in the wallet to add credits.",
+              });
+            } else if (data.alreadyProcessed) {
+              // Already credited via webhook — just refresh display
+              refreshBalance();
+              toast.success("Payment already applied!", {
+                description: `Balance refreshed.`,
+              });
+            } else {
+              // Payment not yet confirmed — poll balance for up to 30s
+              toast.info("Payment received, applying credits…", {
+                description: "This usually takes a few seconds.",
+              });
+              let attempts = 0;
+              const poll = setInterval(async () => {
+                await refreshBalance();
+                attempts++;
+                if (attempts >= 6) {
+                  clearInterval(poll);
+                  toast.info("Credits may take a moment to appear.", {
+                    description: "Try refreshing the page if balance hasn't updated.",
+                  });
+                }
+              }, 5000);
+            }
+          } catch {
+            // Network error — fall back to balance refresh
+            refreshBalance();
+            toast.info("Payment confirmed!", {
+              description: "Refreshing your credit balance…",
+            });
+          }
+        })();
+      } else {
+        // No session_id in URL — just refresh balance (webhook will have handled it)
+        refreshBalance();
+        toast.success("Payment successful!", {
+          description: "Your credits will appear shortly.",
+        });
+      }
+    }
 
     const handleFocus = () => {
       if (document.visibilityState === "visible") {
@@ -66,6 +137,7 @@ export default function Home() {
       document.removeEventListener("visibilitychange", handleFocus);
     };
   }, [refreshBalance]);
+
 
   // 2. Supabase Realtime Subscription on authoritative 'users' table
   useEffect(() => {
