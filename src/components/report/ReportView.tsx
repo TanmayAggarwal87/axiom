@@ -174,14 +174,14 @@ export function ReportView({ state, query, onNewResearch }: ReportViewProps) {
 
       {/* Report Sections */}
       <Tabs defaultValue={report.sections[0]?.id || "overview"} className="w-full">
-        <TabsList className="w-full justify-start overflow-x-auto bg-muted/20 border border-border/20 p-1">
+        <TabsList className="w-full justify-start overflow-x-auto bg-muted/20 border border-border/20 p-1 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden flex-wrap md:flex-nowrap">
           {report.sections.map((section) => {
             const Icon = SECTION_ICONS[section.id] || FileText;
             return (
               <TabsTrigger
                 key={section.id}
                 value={section.id}
-                className="gap-1.5 text-xs cursor-pointer data-[state=active]:bg-background"
+                className="gap-1.5 text-xs cursor-pointer data-[state=active]:bg-background shrink-0"
               >
                 <Icon className="h-3.5 w-3.5" />
                 {section.title}

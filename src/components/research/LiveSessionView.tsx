@@ -275,9 +275,8 @@ function TaskCard({ task }: { task: Task }) {
 
   return (
     <Card
-      className={`border-border/20 bg-card/30 backdrop-blur-sm p-3 flex items-center gap-3 transition-all duration-300 ${
-        task.status === "running" ? "ring-1 ring-amber-500/20 bg-amber-500/5" : ""
-      } ${task.status === "done" ? "opacity-80" : ""}`}
+      className={`border-border/20 bg-card/30 backdrop-blur-sm p-3 flex items-center gap-3 transition-all duration-300 ${task.status === "running" ? "ring-1 ring-amber-500/20 bg-amber-500/5" : ""
+        } ${task.status === "done" ? "opacity-80" : ""}`}
     >
       <div className={`rounded-lg p-2 ${meta.bgColor}`}>
         <Icon className={`h-4 w-4 ${meta.color}`} />
@@ -324,8 +323,8 @@ function EventItem({ event }: { event: SessionEvent }) {
 
   const taskId =
     event.payload &&
-    typeof event.payload === "object" &&
-    "taskId" in (event.payload as Record<string, unknown>)
+      typeof event.payload === "object" &&
+      "taskId" in (event.payload as Record<string, unknown>)
       ? String((event.payload as Record<string, unknown>).taskId)
       : null;
 

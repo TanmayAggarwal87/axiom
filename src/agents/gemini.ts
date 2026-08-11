@@ -7,7 +7,7 @@ import {
   EXTRACT_FINDINGS_ACADEMIC_PROMPT,
 } from "./prompts";
 
-const GEMINI_MODEL = "gemini-2.0-flash";
+const GEMINI_MODEL = "gemini-3.5-flash";
 
 function isMockAllowed(): boolean {
   return process.env.ALLOW_MOCKS === "true" || process.env.NODE_ENV === "test";
@@ -29,7 +29,7 @@ function getApiKey(): string {
 /**
  * Low-level call to Gemini REST API with JSON output mode.
  */
-async function callGeminiJson(prompt: string): Promise<any> {
+async function callGeminiJson(prompt: string, schema?: any): Promise<any> {
   const apiKey = getApiKey();
 
   if (!apiKey && isMockAllowed()) {
@@ -40,6 +40,16 @@ async function callGeminiJson(prompt: string): Promise<any> {
   }
 
   const url = `https://generativelanguage.googleapis.com/v1beta/models/${GEMINI_MODEL}:generateContent?key=${apiKey}`;
+
+  const generationConfig: any = {
+    responseMimeType: "application/json",
+    maxOutputTokens: 8192,
+    temperature: 0.2,
+  };
+
+  if (schema) {
+    generationConfig.responseSchema = schema;
+  }
 
   const response = await fetch(url, {
     method: "POST",
@@ -52,11 +62,7 @@ async function callGeminiJson(prompt: string): Promise<any> {
           parts: [{ text: prompt }],
         },
       ],
-      generationConfig: {
-        responseMimeType: "application/json",
-        maxOutputTokens: 2500,
-        temperature: 0.2,
-      },
+      generationConfig,
     }),
   });
 
@@ -82,6 +88,35 @@ async function callGeminiJson(prompt: string): Promise<any> {
   }
 }
 
+const queryRefinementSchema = {
+  type: "object",
+  properties: {
+    refinedQuery: { type: "string" }
+  },
+  required: ["refinedQuery"]
+};
+
+const extractFindingsSchema = {
+  type: "object",
+  properties: {
+    summary: { type: "string" },
+    findings: {
+      type: "array",
+      items: {
+        type: "object",
+        properties: {
+          claim: { type: "string" },
+          url: { type: "string" },
+          title: { type: "string" },
+          excerpt: { type: "string" }
+        },
+        required: ["claim", "url", "title"]
+      }
+    }
+  },
+  required: ["summary", "findings"]
+};
+
 /**
  * Refine user research query according to agent type using Gemini.
  */
@@ -101,7 +136,7 @@ export async function refineQueryWithGemini(
   );
 
   try {
-    const res = await callGeminiJson(prompt);
+    const res = await callGeminiJson(prompt, queryRefinementSchema);
     if (res && res.refinedQuery && typeof res.refinedQuery === "string") {
       return res.refinedQuery.trim();
     }
@@ -147,7 +182,7 @@ export async function extractFindingsWithGemini(
     .replace("{{searchResultsJson}}", JSON.stringify(searchResults, null, 2));
 
   try {
-    const res = await callGeminiJson(prompt);
+    const res = await callGeminiJson(prompt, extractFindingsSchema);
     if (res && Array.isArray(res.findings)) {
       return {
         summary: typeof res.summary === "string" ? res.summary : "",

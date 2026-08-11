@@ -38,7 +38,7 @@ Output ONLY a JSON object in this exact format:
       "claim": "Specific factual claim extracted from the content",
       "url": "Exact source URL from search results",
       "title": "Title of the source document/page",
-      "excerpt": "Direct supporting quote or key passage"
+      "excerpt": "A very short, 1-sentence quote or concise key phrase supporting the claim"
     }
   ]
 }
@@ -65,7 +65,7 @@ Output ONLY a JSON object in this exact format:
       "claim": "Specific risk, side effect, or contraindication claim",
       "url": "Exact source URL from search results",
       "title": "Title of the source",
-      "excerpt": "Supporting quote or excerpt describing the risk"
+      "excerpt": "A very short, 1-sentence quote or concise key phrase supporting the claim"
     }
   ]
 }
@@ -92,7 +92,7 @@ Output ONLY a JSON object in this exact format:
       "claim": "Scientific claim or empirical finding",
       "url": "Exact URL or DOI link from retrieved sources",
       "title": "Title of paper or academic article",
-      "excerpt": "Key study passage, methodology note, or data excerpt"
+      "excerpt": "A very short, 1-sentence quote or concise key phrase supporting the claim"
     }
   ]
 }

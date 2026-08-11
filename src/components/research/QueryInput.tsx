@@ -1,6 +1,4 @@
-"use client";
-
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { Card } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Alert, AlertDescription } from "@/components/ui/alert";
@@ -20,6 +18,15 @@ const SAMPLE_QUERIES = [
   "Recent breakthroughs in quantum computing and practical applications",
 ];
 
+const LOADING_STATUSES = [
+  "Initializing core planner...",
+  "Spawning research agents...",
+  "Deploying academic & safety streams...",
+  "Decomposing query dependencies...",
+  "Launching agents in background...",
+  "Compiling findings, please wait...",
+];
+
 interface QueryInputProps {
   credits: number;
   onStartResearch: (query: string, budgetUsdc: number) => void;
@@ -30,8 +37,25 @@ interface QueryInputProps {
 export function QueryInput({ credits, onStartResearch, loading, onOpenWallet }: QueryInputProps) {
   const [query, setQuery] = useState("");
   const [budget, setBudget] = useState(0.5);
+  const [statusIndex, setStatusIndex] = useState(0);
 
   const insufficientCredits = credits < budget;
+
+  useEffect(() => {
+    if (!loading) {
+      setStatusIndex(0);
+      return;
+    }
+    const interval = setInterval(() => {
+      setStatusIndex((prev) => {
+        if (prev < LOADING_STATUSES.length - 1) {
+          return prev + 1;
+        }
+        return prev; // Lock at the last element
+      });
+    }, 2500);
+    return () => clearInterval(interval);
+  }, [loading]);
 
   function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
@@ -44,7 +68,7 @@ export function QueryInput({ credits, onStartResearch, loading, onOpenWallet }: 
       {/* Hero */}
       <div className="text-center space-y-4">
         <div className="inline-flex items-center gap-2 rounded-full border border-border/30 bg-muted/30 px-4 py-1.5 text-xs font-medium text-muted-foreground backdrop-blur-sm">
-          <Zap className="h-3 w-3 text-amber-500" />
+          
           Autonomous Multi-Agent Research with x402 Micropayments
         </div>
         <h1 className="text-4xl sm:text-5xl font-bold tracking-tight bg-gradient-to-b from-foreground to-foreground/60 bg-clip-text text-transparent">
@@ -90,16 +114,15 @@ export function QueryInput({ credits, onStartResearch, loading, onOpenWallet }: 
             <Button
               type="submit"
               disabled={!query.trim() || loading || insufficientCredits}
-              className="bg-foreground text-background hover:bg-foreground/90 gap-2 px-6 cursor-pointer transition-all duration-200"
+              className="bg-foreground text-background hover:bg-foreground/90 gap-2 px-6 cursor-pointer transition-all duration-200 min-w-[280px] justify-center"
             >
               {loading ? (
                 <>
-                  <Loader2 className="h-4 w-4 animate-spin" />
-                  Starting...
+                  <Loader2 className="h-4 w-4 animate-spin shrink-0 text-emerald-400" />
+                  <span className="animate-pulse text-xs tracking-wide">{LOADING_STATUSES[statusIndex]}</span>
                 </>
               ) : (
                 <>
-                  <Sparkles className="h-4 w-4" />
                   Start Research
                   <ArrowRight className="h-4 w-4" />
                 </>

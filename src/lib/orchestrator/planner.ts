@@ -1,6 +1,6 @@
 import type { Task } from "./types";
 
-const GEMINI_MODEL = "gemini-2.0-flash";
+const GEMINI_MODEL = "gemini-3.5-flash";
 
 function isMockAllowed(): boolean {
   return process.env.ALLOW_MOCKS === "true" || process.env.NODE_ENV === "test";
@@ -36,7 +36,7 @@ You MUST output ONLY a valid JSON object matching this schema:
   "tasks": [
     {
       "id": "unique-task-id-1",
-      "type": "search" | "academic" | "safety" | "synthesize" | "compile",
+      "type": "search",
       "input": "specific detailed search query or instruction for the task",
       "dependsOn": []
     }
@@ -59,6 +59,29 @@ CRITICAL RULES:
   } else {
     const url = `https://generativelanguage.googleapis.com/v1beta/models/${GEMINI_MODEL}:generateContent?key=${apiKey}`;
 
+    const plannerSchema = {
+      type: "object",
+      properties: {
+        tasks: {
+          type: "array",
+          items: {
+            type: "object",
+            properties: {
+              id: { type: "string" },
+              type: { type: "string", enum: ["search", "academic", "safety", "synthesize", "compile"] },
+              input: { type: "string" },
+              dependsOn: {
+                type: "array",
+                items: { type: "string" }
+              }
+            },
+            required: ["id", "type", "input", "dependsOn"]
+          }
+        }
+      },
+      required: ["tasks"]
+    };
+
     const response = await fetch(url, {
       method: "POST",
       headers: {
@@ -72,6 +95,7 @@ CRITICAL RULES:
         ],
         generationConfig: {
           responseMimeType: "application/json",
+          responseSchema: plannerSchema,
           temperature: 0.1,
         },
       }),
@@ -106,6 +130,14 @@ CRITICAL RULES:
   const tasks: Task[] = [];
   const validTypes = new Set(["search", "academic", "safety", "synthesize", "compile"]);
 
+  // Generate unique task IDs to avoid primary key constraints in DB
+  const idMapping: Record<string, string> = {};
+  for (const t of parsed.tasks) {
+    if (t.id && typeof t.id === "string") {
+      idMapping[t.id] = `${t.id}-${Math.random().toString(36).substr(2, 5)}`;
+    }
+  }
+
   for (const t of parsed.tasks) {
     if (!t.id || typeof t.id !== "string") {
       throw new Error("Invalid task format: Missing or invalid task ID.");
@@ -120,13 +152,18 @@ CRITICAL RULES:
       throw new Error("Invalid task format: dependsOn must be an array of strings.");
     }
 
+    const uniqueId = idMapping[t.id];
+    const uniqueDependsOn = t.dependsOn
+      .map((depId: string) => idMapping[depId])
+      .filter((mappedId: string | undefined) => !!mappedId);
+
     tasks.push({
-      id: t.id,
+      id: uniqueId,
       sessionId,
       type: t.type as any,
       input: t.input,
-      dependsOn: t.dependsOn,
-      status: t.dependsOn.length === 0 ? "ready" : "pending",
+      dependsOn: uniqueDependsOn,
+      status: uniqueDependsOn.length === 0 ? "ready" : "pending",
       createdBy: "orchestrator",
       result: null,
     });
