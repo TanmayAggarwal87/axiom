@@ -1,4 +1,5 @@
 import { NextResponse } from "next/server";
+import { auth } from "@clerk/nextjs/server";
 import Stripe from "stripe";
 
 export const dynamic = "force-dynamic";
@@ -15,16 +16,13 @@ function getStripeInstance() {
 
 export async function POST(request: Request) {
   try {
-    const body = await request.json();
-    const { userId, amountUsd, successUrl, cancelUrl } = body;
-
-    // Strict validation: userId and amountUsd MUST be explicitly provided
-    if (!userId || typeof userId !== "string" || userId.trim() === "") {
-      return NextResponse.json(
-        { error: "Bad Request: 'userId' is required and must be a valid non-empty string." },
-        { status: 400 }
-      );
+    const { userId } = await auth();
+    if (!userId) {
+      return NextResponse.json({ error: "Unauthorized. Please sign in." }, { status: 401 });
     }
+
+    const body = await request.json();
+    const { amountUsd, successUrl, cancelUrl } = body;
 
     if (!amountUsd || typeof amountUsd !== "number" || amountUsd <= 0) {
       return NextResponse.json(

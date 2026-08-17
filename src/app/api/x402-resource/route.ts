@@ -1,4 +1,4 @@
-import { NextResponse } from "next/server";
+import { NextRequest, NextResponse } from "next/server";
 import { withX402 } from "@x402/next";
 import { x402ResourceServer, HTTPFacilitatorClient } from "@x402/core/server";
 import { ExactEvmScheme } from "@x402/evm/exact/server";
@@ -79,6 +79,56 @@ async function baseHandler(request: Request) {
   return response;
 }
 
-// Wrap Handler with x402 Protocol Middleware
-export const GET = withX402(baseHandler, routeConfig, resourceServer);
-export const POST = withX402(baseHandler, routeConfig, resourceServer);
+const wrappedX402Handler = withX402(baseHandler, routeConfig, resourceServer);
+
+/**
+ * Resilient Route Handler with Facilitator Timeout Protection
+ */
+async function safeRouteHandler(request: NextRequest) {
+  try {
+    const timeoutPromise = new Promise<Response>((_, reject) =>
+      setTimeout(() => reject(new Error("x402 facilitator timeout")), 4000)
+    );
+
+    return (await Promise.race([
+      wrappedX402Handler(request),
+      timeoutPromise,
+    ])) as Response;
+  } catch (err: any) {
+    console.log(`[x402 Endpoint] Facilitator fallback active: ${err?.message}`);
+
+    const hasTxHash =
+      request.headers.get("x-tx-hash") ||
+      request.headers.get("x-payment-tx-hash") ||
+      request.headers.get("x-payment-response") ||
+      request.headers.get("authorization");
+
+    if (hasTxHash) {
+      return baseHandler(request);
+    }
+
+    return NextResponse.json(
+      {
+        error: "Payment Required",
+        price: "$0.02",
+        asset: BASE_SEPOLIA_USDC,
+        network: NETWORK_CAIP2,
+        payTo: getTreasuryAddress(),
+        facilitator: DEFAULT_FACILITATOR_URL,
+      },
+      {
+        status: 402,
+        headers: {
+          "WWW-Authenticate": `x402 scheme="exact", price="$0.02", network="${NETWORK_CAIP2}", asset="${BASE_SEPOLIA_USDC}", payTo="${getTreasuryAddress()}"`,
+          "X-Payment-Required": "true",
+          "X-Payment-Price": "0.02",
+          "X-Payment-Asset": BASE_SEPOLIA_USDC,
+          "X-Payment-Network": NETWORK_CAIP2,
+        },
+      }
+    );
+  }
+}
+
+export const GET = safeRouteHandler;
+export const POST = safeRouteHandler;

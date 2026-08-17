@@ -125,8 +125,7 @@ export function stateReducer(state: SessionState, event: SessionEvent): SessionS
       break;
     }
 
-    // Custom helper/fallback event for task failures
-    case "task_failed" as any: {
+    case "task_failed": {
       const payload = event.payload as { taskId: string; error?: string };
       const task = nextState.tasks.find((t) => t.id === payload.taskId);
       if (task) {

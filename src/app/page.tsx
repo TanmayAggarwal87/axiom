@@ -1,6 +1,7 @@
 "use client";
 
 import { useState, useEffect, useCallback, useRef } from "react";
+import { useAuth, useUser, SignInButton, SignUpButton, UserButton } from "@clerk/nextjs";
 import { QueryInput } from "@/components/research/QueryInput";
 import { LiveSessionView } from "@/components/research/LiveSessionView";
 import { ReportView } from "@/components/report/ReportView";
@@ -13,12 +14,16 @@ import {
   Activity,
   Hexagon,
   RotateCw,
+  LogIn,
+  UserPlus,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 
 type AppPhase = "idle" | "running" | "completed";
 
 export default function Home() {
+  const { isSignedIn, userId } = useAuth();
+  const { user } = useUser();
   const [phase, setPhase] = useState<AppPhase>("idle");
   const [credits, setCredits] = useState<number>(10);
   const [sessionId, setSessionId] = useState<string | null>(null);
@@ -31,11 +36,12 @@ export default function Home() {
 
   // Authoritative balance refetch
   const refreshBalance = useCallback(async () => {
+    if (!isSignedIn) return;
     if (isFetchingBalanceRef.current) return;
     isFetchingBalanceRef.current = true;
     setRefreshing(true);
     try {
-      const r = await fetch("/api/wallet/balance?userId=default-user");
+      const r = await fetch("/api/wallet/balance");
       const data = await r.json();
       if (data.success && typeof data.credits === "number") {
         setCredits(data.credits);
@@ -46,21 +52,21 @@ export default function Home() {
       isFetchingBalanceRef.current = false;
       setRefreshing(false);
     }
-  }, []);
+  }, [isSignedIn]);
 
   // 1. Initial fetch + Stripe Checkout success detection + Tab Focus fallback
   useEffect(() => {
-    refreshBalance();
+    if (isSignedIn) {
+      refreshBalance();
+    }
 
     // Detect Stripe redirect: /?checkout=success&session_id=cs_test_...
     const params = new URLSearchParams(window.location.search);
     if (params.get("checkout") === "success") {
       const stripeSessionId = params.get("session_id");
-      // Clean the URL immediately so a refresh doesn't re-trigger this
       window.history.replaceState({}, "", "/");
 
       if (stripeSessionId) {
-        // Actively verify with Stripe and credit the user right now
         (async () => {
           try {
             const res = await fetch("/api/stripe/verify-session", {
@@ -68,7 +74,6 @@ export default function Home() {
               headers: { "Content-Type": "application/json" },
               body: JSON.stringify({
                 sessionId: stripeSessionId,
-                userId: "default-user",
               }),
             });
             const data = await res.json();
@@ -84,47 +89,20 @@ export default function Home() {
                   "Use the 'Instant Test Top-Up' button in the wallet to add credits.",
               });
             } else if (data.alreadyProcessed) {
-              // Already credited via webhook — just refresh display
               refreshBalance();
               toast.success("Payment already applied!", {
                 description: `Balance refreshed.`,
               });
-            } else {
-              // Payment not yet confirmed — poll balance for up to 30s
-              toast.info("Payment received, applying credits…", {
-                description: "This usually takes a few seconds.",
-              });
-              let attempts = 0;
-              const poll = setInterval(async () => {
-                await refreshBalance();
-                attempts++;
-                if (attempts >= 6) {
-                  clearInterval(poll);
-                  toast.info("Credits may take a moment to appear.", {
-                    description: "Try refreshing the page if balance hasn't updated.",
-                  });
-                }
-              }, 5000);
             }
           } catch {
-            // Network error — fall back to balance refresh
             refreshBalance();
-            toast.info("Payment confirmed!", {
-              description: "Refreshing your credit balance…",
-            });
           }
         })();
-      } else {
-        // No session_id in URL — just refresh balance (webhook will have handled it)
-        refreshBalance();
-        toast.success("Payment successful!", {
-          description: "Your credits will appear shortly.",
-        });
       }
     }
 
     const handleFocus = () => {
-      if (document.visibilityState === "visible") {
+      if (document.visibilityState === "visible" && isSignedIn) {
         refreshBalance();
       }
     };
@@ -136,11 +114,12 @@ export default function Home() {
       window.removeEventListener("focus", handleFocus);
       document.removeEventListener("visibilitychange", handleFocus);
     };
-  }, [refreshBalance]);
-
+  }, [refreshBalance, isSignedIn]);
 
   // 2. Supabase Realtime Subscription on authoritative 'users' table
   useEffect(() => {
+    if (!isSignedIn || !userId) return;
+
     const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL;
     const supabaseAnonKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY;
 
@@ -151,14 +130,14 @@ export default function Home() {
     try {
       const supabase = createClient(supabaseUrl, supabaseAnonKey);
       const channel = supabase
-        .channel("user-credits-realtime")
+        .channel(`user-credits-${userId}`)
         .on(
           "postgres_changes",
           {
             event: "*",
             schema: "public",
             table: "users",
-            filter: "id=eq.default-user",
+            filter: `id=eq.${userId}`,
           },
           (payload: any) => {
             if (payload.new && typeof payload.new.credits === "number") {
@@ -179,10 +158,17 @@ export default function Home() {
     } catch (err) {
       console.warn("[Realtime] Failed to initialize Supabase Realtime:", err);
     }
-  }, [refreshBalance]);
+  }, [refreshBalance, isSignedIn, userId]);
 
   // Start research session
   async function handleStartResearch(query: string, budgetUsdc: number) {
+    if (!isSignedIn) {
+      toast.error("Authentication required", {
+        description: "Please sign in to start research sessions.",
+      });
+      return;
+    }
+
     setStartLoading(true);
     try {
       const res = await fetch("/api/research/start", {
@@ -190,7 +176,6 @@ export default function Home() {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           query,
-          userId: "default-user",
           budgetUsdc,
         }),
       });
@@ -203,19 +188,6 @@ export default function Home() {
         toast.success("Research session started", {
           description: `Session ${data.sessionId.slice(0, 20)}...`,
         });
-
-        // If the API returned finalState directly (synchronous execution),
-        // move straight to completed
-        if (data.finalState) {
-          const tasks = data.finalState.tasks || [];
-          const allDone = tasks.length > 0 && tasks.every(
-            (t: any) => t.status === "done" || t.status === "failed"
-          );
-          if (allDone) {
-            setCompletedState(data.finalState);
-            setPhase("completed");
-          }
-        }
       } else {
         toast.error("Failed to start research", {
           description: data.error || "Unknown error",
@@ -247,6 +219,12 @@ export default function Home() {
   }
 
   function handleOpenWallet() {
+    if (!isSignedIn) {
+      toast.info("Please sign in", {
+        description: "You must be signed in to manage your wallet balance.",
+      });
+      return;
+    }
     walletRef.current?.click();
   }
 
@@ -274,33 +252,61 @@ export default function Home() {
             </span>
           </div>
 
-          {/* Wallet & Refresh Affordance */}
-          <div className="flex items-center gap-1.5">
-            <CreditWalletModal
-              credits={credits}
-              onTopUp={(newBalance) => setCredits(newBalance)}
-              onRefreshBalance={refreshBalance}
-              refreshing={refreshing}
-              trigger={
-                <button
-                  ref={walletRef}
-                  className="inline-flex items-center gap-2 rounded-lg border border-border/30 bg-card/50 backdrop-blur-sm px-3 py-1.5 text-sm hover:bg-accent/80 transition-all duration-200 cursor-pointer"
+          {/* User & Wallet Controls */}
+          <div className="flex items-center gap-2">
+            {isSignedIn ? (
+              <>
+                <CreditWalletModal
+                  credits={credits}
+                  onTopUp={(newBalance) => setCredits(newBalance)}
+                  onRefreshBalance={refreshBalance}
+                  refreshing={refreshing}
+                  trigger={
+                    <button
+                      ref={walletRef}
+                      className="inline-flex items-center gap-2 rounded-lg border border-border/30 bg-card/50 backdrop-blur-sm px-3 py-1.5 text-sm hover:bg-accent/80 transition-all duration-200 cursor-pointer"
+                    >
+                      <Wallet className="h-4 w-4 text-emerald-500" />
+                      <span className="font-semibold">${credits.toFixed(2)}</span>
+                    </button>
+                  }
+                />
+                <Button
+                  variant="ghost"
+                  size="icon"
+                  onClick={refreshBalance}
+                  disabled={refreshing}
+                  className="h-8 w-8 text-muted-foreground hover:text-foreground cursor-pointer"
+                  title="Refresh credit balance"
                 >
-                  <Wallet className="h-4 w-4 text-emerald-500" />
-                  <span className="font-semibold">${credits.toFixed(2)}</span>
-                </button>
-              }
-            />
-            <Button
-              variant="ghost"
-              size="icon"
-              onClick={refreshBalance}
-              disabled={refreshing}
-              className="h-8 w-8 text-muted-foreground hover:text-foreground cursor-pointer"
-              title="Refresh credit balance"
-            >
-              <RotateCw className={`h-3.5 w-3.5 ${refreshing ? "animate-spin" : ""}`} />
-            </Button>
+                  <RotateCw className={`h-3.5 w-3.5 ${refreshing ? "animate-spin" : ""}`} />
+                </Button>
+                <div className="ml-1 flex items-center">
+                  <UserButton
+                    appearance={{
+                      elements: {
+                        userButtonAvatarBox: "h-8 w-8 rounded-lg border border-border/30",
+                      },
+                    }}
+                  />
+                </div>
+              </>
+            ) : (
+              <div className="flex items-center gap-2">
+                <SignInButton mode="modal">
+                  <Button variant="ghost" size="sm" className="gap-1.5 cursor-pointer">
+                    <LogIn className="h-4 w-4" />
+                    Sign In
+                  </Button>
+                </SignInButton>
+                <SignUpButton mode="modal">
+                  <Button size="sm" className="gap-1.5 bg-foreground text-background hover:bg-foreground/90 cursor-pointer">
+                    <UserPlus className="h-4 w-4" />
+                    Get Started
+                  </Button>
+                </SignUpButton>
+              </div>
+            )}
           </div>
         </div>
       </header>
@@ -342,3 +348,4 @@ export default function Home() {
     </>
   );
 }
+

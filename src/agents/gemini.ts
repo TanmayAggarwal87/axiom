@@ -28,6 +28,7 @@ function getApiKey(): string {
 
 /**
  * Low-level call to Gemini REST API with JSON output mode.
+ * Includes exponential backoff retry for transient errors (503/429).
  */
 async function callGeminiJson(prompt: string, schema?: any): Promise<any> {
   const apiKey = getApiKey();
@@ -51,41 +52,60 @@ async function callGeminiJson(prompt: string, schema?: any): Promise<any> {
     generationConfig.responseSchema = schema;
   }
 
-  const response = await fetch(url, {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-    },
-    body: JSON.stringify({
-      contents: [
-        {
-          parts: [{ text: prompt }],
-        },
-      ],
-      generationConfig,
-    }),
-  });
+  const MAX_RETRIES = 3;
+  const RETRYABLE_STATUS = [429, 503, 500];
 
-  if (!response.ok) {
+  for (let attempt = 1; attempt <= MAX_RETRIES; attempt++) {
+    const response = await fetch(url, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({
+        contents: [
+          {
+            parts: [{ text: prompt }],
+          },
+        ],
+        generationConfig,
+      }),
+    });
+
+    if (response.ok) {
+      const result = await response.json();
+      const rawText = result?.candidates?.[0]?.content?.parts?.[0]?.text || "";
+
+      if (!rawText) {
+        throw new Error("Gemini returned empty response text.");
+      }
+
+      try {
+        return JSON.parse(rawText);
+      } catch (err) {
+        const cleaned = rawText.replace(/```json\n?|\n?```/g, "").trim();
+        return JSON.parse(cleaned);
+      }
+    }
+
+    // Transient error — retry with exponential backoff
+    if (RETRYABLE_STATUS.includes(response.status) && attempt < MAX_RETRIES) {
+      const backoffMs = Math.min(1000 * Math.pow(2, attempt - 1), 8000);
+      console.warn(
+        `[Gemini] Transient ${response.status} on attempt ${attempt}/${MAX_RETRIES}. Retrying in ${backoffMs}ms...`
+      );
+      await new Promise((resolve) => setTimeout(resolve, backoffMs));
+      continue;
+    }
+
+    // Non-retryable or final attempt — throw
     const errText = await response.text();
     throw new Error(
       `Gemini API request failed with status ${response.status}: ${errText}`
     );
   }
 
-  const result = await response.json();
-  const rawText = result?.candidates?.[0]?.content?.parts?.[0]?.text || "";
-
-  if (!rawText) {
-    throw new Error("Gemini returned empty response text.");
-  }
-
-  try {
-    return JSON.parse(rawText);
-  } catch (err) {
-    const cleaned = rawText.replace(/```json\n?|\n?```/g, "").trim();
-    return JSON.parse(cleaned);
-  }
+  // Should never reach here, but TypeScript needs it
+  throw new Error("Gemini API: exhausted all retry attempts.");
 }
 
 const queryRefinementSchema = {

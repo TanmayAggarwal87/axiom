@@ -1,15 +1,19 @@
 import { NextResponse } from "next/server";
-import { ensureUser, getUserCredits } from "@/lib/supabase/db";
+import { auth } from "@clerk/nextjs/server";
+import { ensureUser, getUserCredits, supabase } from "@/lib/supabase/db";
 
 /**
- * Simulates a Stripe test-mode top-up by directly crediting the user's wallet.
- * In production, this would be a Stripe webhook handler (Module 3 owns Stripe integration).
- * Module 4 provides the UI flow that triggers this endpoint.
+ * Direct top-up handler for testing / credit top-up.
  */
 export async function POST(req: Request) {
   try {
+    const { userId } = await auth();
+    if (!userId) {
+      return NextResponse.json({ success: false, error: "Unauthorized" }, { status: 401 });
+    }
+
     const body = await req.json();
-    const { userId = "default-user", amount } = body;
+    const { amount } = body;
 
     if (!amount || typeof amount !== "number" || amount <= 0) {
       return NextResponse.json(
@@ -25,12 +29,23 @@ export async function POST(req: Request) {
       );
     }
 
-    // Get current balance, then add the top-up amount
-    const currentCredits = await getUserCredits(userId);
-    const newBalance = currentCredits + amount;
+    // Use userId-based fallback email (no slow currentUser() call)
+    const email = `${userId}@user.axiom`;
 
-    // Use ensureUser to upsert with the new balance
-    await ensureUser(userId, "demo@axiom.org", newBalance);
+    // Get current balance
+    const currentCredits = await getUserCredits(userId);
+    const newBalance = Number((currentCredits + amount).toFixed(4));
+
+    if (supabase) {
+      const { error } = await supabase.from("users").upsert({
+        id: userId,
+        email,
+        credits: newBalance,
+      });
+      if (error) throw error;
+    } else {
+      await ensureUser(userId, email, newBalance);
+    }
 
     return NextResponse.json({
       success: true,
