@@ -1,22 +1,7 @@
 import type { Task, TaskResult, SourceRef, AgentFinding, AgentOutputData } from "./types";
 import { refineQueryWithGemini, extractFindingsWithGemini } from "./gemini";
 import { searchTavily } from "./tavily";
-
-/**
- * Normalizes a URL for deduplication.
- */
-function normalizeUrl(urlStr: string): string {
-  try {
-    const parsed = new URL(urlStr);
-    parsed.hash = "";
-    if (parsed.pathname.endsWith("/") && parsed.pathname.length > 1) {
-      parsed.pathname = parsed.pathname.slice(0, -1);
-    }
-    return parsed.toString().toLowerCase();
-  } catch {
-    return urlStr.trim().toLowerCase();
-  }
-}
+import { normalizeUrl, matchAuthoritativeSource } from "@/lib/url-utils";
 
 /**
  * Safety Agent implementation.
@@ -47,23 +32,24 @@ export async function executeSafetyAgent(task: Task): Promise<TaskResult> {
     "safety"
   );
 
-  // Step 4: Map and deduplicate sources & findings
+  // Step 4: Map and deduplicate sources & findings against authoritative search results
   const sourceMap = new Map<string, SourceRef>();
   const agentFindings: AgentFinding[] = [];
 
   for (const raw of rawFindings) {
-    const normUrl = normalizeUrl(raw.url);
+    const authoritative = matchAuthoritativeSource(raw.url, raw.title, searchResults);
+    const normKey = normalizeUrl(authoritative.url);
 
-    if (!sourceMap.has(normUrl)) {
-      sourceMap.set(normUrl, {
-        title: raw.title || "Safety Resource",
-        url: raw.url,
+    if (!sourceMap.has(normKey)) {
+      sourceMap.set(normKey, {
+        title: authoritative.title || "Safety Resource",
+        url: authoritative.url,
         type: "safety",
         paid: false,
       });
     }
 
-    const source = sourceMap.get(normUrl)!;
+    const source = sourceMap.get(normKey)!;
     agentFindings.push({
       claim: raw.claim,
       source,
@@ -86,3 +72,4 @@ export async function executeSafetyAgent(task: Task): Promise<TaskResult> {
     paymentReceiptId: null,
   };
 }
+

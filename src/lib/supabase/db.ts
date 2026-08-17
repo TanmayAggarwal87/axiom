@@ -7,20 +7,28 @@ const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL || "";
 const supabaseKey = process.env.SUPABASE_SERVICE_ROLE_KEY || "";
 const useRealSupabase = supabaseUrl !== "" && supabaseKey !== "";
 
-// In-memory fallback database
+// In-memory fallback database (attached to globalThis for HMR persistence)
 type InMemoryDB = {
   users: Record<string, { id: string; email: string; credits: number }>;
   sessions: Record<string, { id: string; user_id: string; created_at: string }>;
   states: Record<string, SessionState>;
 };
 
-const inMemoryDb: InMemoryDB = {
+const globalForDb = globalThis as unknown as {
+  inMemoryDb: InMemoryDB | undefined;
+};
+
+const inMemoryDb: InMemoryDB = globalForDb.inMemoryDb ?? {
   users: {
     "default-user": { id: "default-user", email: "demo@axiom.org", credits: 10.0 },
   },
   sessions: {},
   states: {},
 };
+
+if (process.env.NODE_ENV !== "production") {
+  globalForDb.inMemoryDb = inMemoryDb;
+}
 
 // Initialize Supabase Client
 export const supabase = useRealSupabase ? createClient(supabaseUrl, supabaseKey) : null;
@@ -276,6 +284,18 @@ export async function getSessionState(sessionId: string): Promise<SessionState |
   }
 }
 
+/**
+ * Retrieves the owner userId of a research session.
+ */
+export async function getSessionUserId(sessionId: string): Promise<string | null> {
+  if (useRealSupabase && supabase) {
+    const { data } = await supabase.from("sessions").select("user_id").eq("id", sessionId).single();
+    return data?.user_id || null;
+  } else {
+    return inMemoryDb.sessions[sessionId]?.user_id || null;
+  }
+}
+
 // Global lock object to serialize inserts and prevent race conditions per session
 const sessionLocks: Record<string, Promise<any>> = {};
 
@@ -357,7 +377,7 @@ export async function insertEvent(sessionId: string, event: SessionEvent): Promi
           break;
         }
 
-        case "task_failed" as any: {
+        case "task_failed": {
           const payload = event.payload as { taskId: string };
           await supabase
             .from("tasks")
@@ -488,7 +508,7 @@ export async function insertEvent(sessionId: string, event: SessionEvent): Promi
           task.status = "done";
           task.result = payload.result;
         }
-      } else if ((event.type as any) === "task_failed") {
+      } else if (event.type === "task_failed") {
         const payload = event.payload as { taskId: string };
         const task = nextState.tasks.find((t) => t.id === payload.taskId);
         if (task) task.status = "failed";

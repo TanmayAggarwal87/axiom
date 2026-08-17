@@ -1,4 +1,5 @@
 import { NextResponse } from "next/server";
+import { auth } from "@clerk/nextjs/server";
 import Stripe from "stripe";
 import { topUpUserCredit, getUserCreditBalance } from "@/lib/credits";
 
@@ -17,11 +18,16 @@ function getStripe() {
 
 export async function POST(request: Request) {
   try {
-    const { sessionId, userId } = await request.json();
+    const { userId } = await auth();
+    if (!userId) {
+      return NextResponse.json({ error: "Unauthorized. Please sign in." }, { status: 401 });
+    }
 
-    if (!sessionId || !userId) {
+    const { sessionId } = await request.json();
+
+    if (!sessionId) {
       return NextResponse.json(
-        { error: "sessionId and userId are required." },
+        { error: "sessionId is required." },
         { status: 400 }
       );
     }

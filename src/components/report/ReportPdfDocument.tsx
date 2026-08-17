@@ -11,81 +11,97 @@ import type { CompiledReport } from "@/lib/report/compiler";
 
 const styles = StyleSheet.create({
   page: {
-    padding: 36,
+    paddingTop: 40,
+    paddingBottom: 48,
+    paddingHorizontal: 40,
     fontFamily: "Helvetica",
     fontSize: 10,
     color: "#1e293b",
     lineHeight: 1.5,
   },
   header: {
-    marginBottom: 20,
-    borderBottomWidth: 1,
-    borderBottomColor: "#cbd5e1",
+    marginBottom: 16,
+    borderBottomWidth: 1.5,
+    borderBottomColor: "#0f172a",
     borderBottomStyle: "solid",
-    paddingBottom: 12,
+    paddingBottom: 10,
+  },
+  brandBadge: {
+    fontSize: 9,
+    fontFamily: "Helvetica-Bold",
+    color: "#059669",
+    letterSpacing: 1,
+    marginBottom: 4,
+    textTransform: "uppercase",
   },
   title: {
-    fontSize: 22,
+    fontSize: 20,
     fontFamily: "Helvetica-Bold",
     color: "#0f172a",
-    marginBottom: 4,
+    marginBottom: 6,
   },
-  query: {
-    fontSize: 11,
-    fontFamily: "Helvetica-Oblique",
-    color: "#475569",
+  queryBox: {
+    backgroundColor: "#f8fafc",
+    borderRadius: 4,
+    padding: 8,
+    borderLeftWidth: 3,
+    borderLeftColor: "#2563eb",
     marginBottom: 8,
+  },
+  queryText: {
+    fontSize: 10,
+    fontFamily: "Helvetica-Oblique",
+    color: "#334155",
   },
   metaRow: {
     flexDirection: "row",
     justifyContent: "space-between",
-    fontSize: 9,
+    fontSize: 8.5,
     color: "#64748b",
+    marginTop: 4,
   },
   section: {
-    marginBottom: 18,
+    marginBottom: 14,
   },
   sectionTitle: {
-    fontSize: 14,
+    fontSize: 13,
     fontFamily: "Helvetica-Bold",
     color: "#0f172a",
     borderBottomWidth: 1,
-    borderBottomColor: "#e2e8f0",
+    borderBottomColor: "#cbd5e1",
     borderBottomStyle: "solid",
-    paddingBottom: 4,
+    paddingBottom: 3,
     marginBottom: 8,
+    marginTop: 6,
   },
   paragraph: {
-    marginBottom: 8,
+    marginBottom: 6,
     textAlign: "justify",
+    fontSize: 9.5,
   },
   bulletPoint: {
     flexDirection: "row",
     marginBottom: 4,
-    paddingLeft: 8,
+    paddingLeft: 6,
   },
   bulletDot: {
     width: 12,
     fontFamily: "Helvetica-Bold",
+    fontSize: 9.5,
+    color: "#2563eb",
   },
   bulletText: {
     flex: 1,
-  },
-  subsectionTitle: {
-    fontSize: 11,
-    fontFamily: "Helvetica-Bold",
-    color: "#334155",
-    marginTop: 6,
-    marginBottom: 4,
+    fontSize: 9.5,
   },
   table: {
     width: "100%",
     marginTop: 6,
-    marginBottom: 10,
+    marginBottom: 8,
     borderWidth: 1,
     borderColor: "#e2e8f0",
     borderStyle: "solid",
-    borderRadius: 4,
+    borderRadius: 3,
   },
   tableRow: {
     flexDirection: "row",
@@ -93,10 +109,11 @@ const styles = StyleSheet.create({
     borderBottomColor: "#f1f5f9",
     borderBottomStyle: "solid",
     padding: 5,
+    minHeight: 18,
   },
   tableHeaderRow: {
     flexDirection: "row",
-    backgroundColor: "#f8fafc",
+    backgroundColor: "#f1f5f9",
     borderBottomWidth: 1,
     borderBottomColor: "#cbd5e1",
     borderBottomStyle: "solid",
@@ -105,25 +122,25 @@ const styles = StyleSheet.create({
   tableCellHeader: {
     fontFamily: "Helvetica-Bold",
     fontSize: 8,
-    color: "#334155",
+    color: "#0f172a",
   },
   tableCell: {
     fontSize: 8,
-    color: "#475569",
+    color: "#334155",
   },
   footer: {
     position: "absolute",
-    bottom: 24,
-    left: 36,
-    right: 36,
+    bottom: 20,
+    left: 40,
+    right: 40,
     flexDirection: "row",
     justifyContent: "space-between",
     fontSize: 8,
     color: "#94a3b8",
     borderTopWidth: 1,
-    borderTopColor: "#f1f5f9",
+    borderTopColor: "#e2e8f0",
     borderTopStyle: "solid",
-    paddingTop: 8,
+    paddingTop: 6,
   },
 });
 
@@ -135,29 +152,32 @@ export function ReportPdfDocument({ report }: ReportPdfDocumentProps) {
   return (
     <Document title={report.title} author="Axiom Autonomous Research Orchestrator">
       <Page size="A4" style={styles.page}>
-        {/* Header */}
+        {/* Cover / Header Section */}
         <View style={styles.header}>
+          <Text style={styles.brandBadge}>Axiom · Autonomous AI Research Report</Text>
           <Text style={styles.title}>{report.title}</Text>
-          <Text style={styles.query}>&ldquo;{report.query}&rdquo;</Text>
+          <View style={styles.queryBox}>
+            <Text style={styles.queryText}>Research Question: &ldquo;{report.query}&rdquo;</Text>
+          </View>
           <View style={styles.metaRow}>
-            <Text>Generated: {new Date(report.generatedAt).toLocaleString()}</Text>
+            <Text>Generated: {new Date(report.generatedAt).toLocaleDateString()} {new Date(report.generatedAt).toLocaleTimeString()}</Text>
             <Text>
-              Spent: ${report.budgetSummary.spentUsdc.toFixed(4)} USDC / Total: $
-              {report.budgetSummary.totalUsdc.toFixed(2)} USDC
+              Research Budget Spent: ${report.budgetSummary.spentUsdc.toFixed(4)} / ${report.budgetSummary.totalUsdc.toFixed(2)} USDC
             </Text>
           </View>
         </View>
 
-        {/* Report Sections */}
+        {/* Dynamic Report Sections */}
         {report.sections.map((sec) => (
-          <View key={sec.id} style={styles.section} wrap={false}>
+          <View key={sec.id} style={styles.section}>
             <Text style={styles.sectionTitle}>{sec.title}</Text>
             {sec.content.split("\n\n").map((para, i) => {
               if (para.startsWith("•") || para.startsWith("⚠")) {
+                const isRisk = para.startsWith("⚠");
                 return (
-                  <View key={i} style={styles.bulletPoint}>
-                    <Text style={styles.bulletDot}>
-                      {para.startsWith("⚠") ? "!" : "•"}
+                  <View key={i} style={styles.bulletPoint} wrap={false}>
+                    <Text style={[styles.bulletDot, isRisk ? { color: "#d97706" } : {}]}>
+                      {isRisk ? "!" : "•"}
                     </Text>
                     <Text style={styles.bulletText}>
                       {para.replace(/^[•⚠]\s*/, "")}
@@ -165,9 +185,9 @@ export function ReportPdfDocument({ report }: ReportPdfDocumentProps) {
                   </View>
                 );
               }
-              if (para.startsWith("**")) {
+              if (para.startsWith("**") && para.endsWith("**")) {
                 return (
-                  <Text key={i} style={styles.subsectionTitle}>
+                  <Text key={i} style={[styles.paragraph, { fontFamily: "Helvetica-Bold", color: "#0f172a", marginTop: 4 }]}>
                     {para.replace(/\*\*/g, "")}
                   </Text>
                 );
@@ -181,28 +201,28 @@ export function ReportPdfDocument({ report }: ReportPdfDocumentProps) {
           </View>
         ))}
 
-        {/* Fact-Check Audit */}
+        {/* Fact-Check Audit Table */}
         {report.factCheckAudit && report.factCheckAudit.length > 0 && (
-          <View style={styles.section} wrap={false}>
-            <Text style={styles.sectionTitle}>Fact-Check Verification Audit</Text>
+          <View style={styles.section}>
+            <Text style={styles.sectionTitle}>Fact-Checking Verification Audit</Text>
             <View style={styles.table}>
-              <View style={styles.tableHeaderRow}>
-                <Text style={[styles.tableCellHeader, { width: "50%" }]}>Claim</Text>
-                <Text style={[styles.tableCellHeader, { width: "25%" }]}>Status</Text>
+              <View style={styles.tableHeaderRow} wrap={false}>
+                <Text style={[styles.tableCellHeader, { width: "50%" }]}>Claim Statement</Text>
+                <Text style={[styles.tableCellHeader, { width: "25%" }]}>Verification Status</Text>
                 <Text style={[styles.tableCellHeader, { width: "25%" }]}>Evidence Count</Text>
               </View>
               {report.factCheckAudit.map((fc, i) => (
-                <View key={i} style={styles.tableRow}>
+                <View key={i} style={styles.tableRow} wrap={false}>
                   <View style={{ width: "50%" }}>
                     <Text style={styles.tableCell}>{fc.claimText}</Text>
                     {fc.correctedText && fc.correctedText !== fc.claimText && (
-                      <Text style={[styles.tableCell, { fontFamily: "Helvetica-Oblique", color: "#10b981", marginTop: 2 }]}>
+                      <Text style={[styles.tableCell, { fontFamily: "Helvetica-Oblique", color: "#059669", marginTop: 2 }]}>
                         Corrected: {fc.correctedText}
                       </Text>
                     )}
                   </View>
                   <Text style={[styles.tableCell, { width: "25%", fontFamily: "Helvetica-Bold" }]}>
-                    {fc.status.toUpperCase()}
+                    {fc.status.toUpperCase().replace("_", " ")}
                   </Text>
                   <Text style={[styles.tableCell, { width: "25%" }]}>
                     {fc.evidenceCount} source(s)
@@ -213,43 +233,45 @@ export function ReportPdfDocument({ report }: ReportPdfDocumentProps) {
           </View>
         )}
 
-        {/* Sources & Citations */}
+        {/* References & Citations */}
         {report.citations && report.citations.length > 0 && (
-          <View style={styles.section} wrap={false}>
-            <Text style={styles.sectionTitle}>Sources & Citations</Text>
+          <View style={styles.section}>
+            <Text style={styles.sectionTitle}>References & Bibliography</Text>
             {report.citations.map((cit) => (
-              <View key={cit.index} style={{ marginBottom: 6, paddingLeft: 4 }}>
-                <Text style={{ fontSize: 9 }}>
+              <View key={cit.index} style={{ marginBottom: 5, paddingLeft: 4 }} wrap={false}>
+                <Text style={{ fontSize: 8.5 }}>
                   <Text style={{ fontFamily: "Helvetica-Bold" }}>[{cit.index}] </Text>
-                  <Text style={{ fontFamily: "Helvetica-Bold", color: "#2563eb" }}>{cit.source.title}</Text>
+                  <Text style={{ fontFamily: "Helvetica-Bold", color: "#1e293b" }}>{cit.source.title}</Text>
                   <Text style={{ color: "#64748b" }}> ({cit.source.type}{cit.paid ? ", x402 paid" : ""})</Text>
                 </Text>
-                <Link src={cit.source.url} style={{ fontSize: 8, color: "#3b82f6", marginTop: 1 }}>
-                  {cit.source.url}
-                </Link>
+                {cit.source.url && (
+                  <Link src={cit.source.url} style={{ fontSize: 7.5, color: "#2563eb", marginTop: 1 }}>
+                    {cit.source.url}
+                  </Link>
+                )}
               </View>
             ))}
           </View>
         )}
 
-        {/* Payment Proof Appendix */}
-        <View style={styles.section} wrap={false}>
-          <Text style={styles.sectionTitle}>Payment Proof Appendix (x402 Micropayments)</Text>
+        {/* Appendix: x402 Micropayments */}
+        <View style={styles.section}>
+          <Text style={styles.sectionTitle}>Appendix: On-Chain Payment Proof (x402 Base Sepolia)</Text>
           {report.payments && report.payments.length > 0 ? (
             <View style={styles.table}>
-              <View style={styles.tableHeaderRow}>
+              <View style={styles.tableHeaderRow} wrap={false}>
                 <Text style={[styles.tableCellHeader, { width: "25%" }]}>Agent / Purpose</Text>
                 <Text style={[styles.tableCellHeader, { width: "15%" }]}>Amount</Text>
                 <Text style={[styles.tableCellHeader, { width: "20%" }]}>Network</Text>
                 <Text style={[styles.tableCellHeader, { width: "40%" }]}>Tx Hash</Text>
               </View>
               {report.payments.map((p) => (
-                <View key={p.id} style={styles.tableRow}>
+                <View key={p.id} style={styles.tableRow} wrap={false}>
                   <View style={{ width: "25%" }}>
                     <Text style={[styles.tableCell, { fontFamily: "Helvetica-Bold" }]}>{p.agent}</Text>
                     <Text style={[styles.tableCell, { fontSize: 7, color: "#64748b" }]}>{p.purpose}</Text>
                   </View>
-                  <Text style={[styles.tableCell, { width: "15%", fontFamily: "Helvetica-Bold", color: "#10b981" }]}>
+                  <Text style={[styles.tableCell, { width: "15%", fontFamily: "Helvetica-Bold", color: "#059669" }]}>
                     ${p.amountUsdc.toFixed(4)} USDC
                   </Text>
                   <Text style={[styles.tableCell, { width: "20%" }]}>{p.network}</Text>
@@ -263,7 +285,7 @@ export function ReportPdfDocument({ report }: ReportPdfDocumentProps) {
             </View>
           ) : (
             <Text style={[styles.paragraph, { color: "#64748b", fontFamily: "Helvetica-Oblique" }]}>
-              No paid x402 micropayments were executed during this session. All sources were retrieved from open endpoints.
+              No paid x402 micropayments were executed during this session. All sources were retrieved from open access endpoints.
             </Text>
           )}
         </View>

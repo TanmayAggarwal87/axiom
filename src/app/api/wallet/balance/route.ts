@@ -1,10 +1,16 @@
 import { NextResponse } from "next/server";
-import { getUserCredits } from "@/lib/supabase/db";
+import { auth } from "@clerk/nextjs/server";
+import { getUserCredits, ensureUser } from "@/lib/supabase/db";
 
-export async function GET(req: Request) {
+export async function GET() {
   try {
-    const { searchParams } = new URL(req.url);
-    const userId = searchParams.get("userId") || "default-user";
+    const { userId } = await auth();
+    if (!userId) {
+      return NextResponse.json({ success: false, error: "Unauthorized" }, { status: 401 });
+    }
+
+    // Ensure wallet exists — use userId-based fallback email (no slow currentUser() call)
+    await ensureUser(userId, `${userId}@user.axiom`, 10.0);
 
     const credits = await getUserCredits(userId);
 

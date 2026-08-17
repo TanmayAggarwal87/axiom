@@ -2,22 +2,7 @@ import type { Task, TaskResult, SourceRef, AgentFinding, AgentOutputData } from 
 import type { PaidFetcher } from "./adapters/paid-fetcher";
 import { refineQueryWithGemini, extractFindingsWithGemini } from "./gemini";
 import { searchTavily } from "./tavily";
-
-/**
- * Normalizes a URL for deduplication.
- */
-function normalizeUrl(urlStr: string): string {
-  try {
-    const parsed = new URL(urlStr);
-    parsed.hash = "";
-    if (parsed.pathname.endsWith("/") && parsed.pathname.length > 1) {
-      parsed.pathname = parsed.pathname.slice(0, -1);
-    }
-    return parsed.toString().toLowerCase();
-  } catch {
-    return urlStr.trim().toLowerCase();
-  }
-}
+import { normalizeUrl, matchAuthoritativeSource } from "@/lib/url-utils";
 
 /**
  * Prioritized academic repositories, preprint servers, and peer-reviewed journal platforms.
@@ -46,23 +31,9 @@ const ACADEMIC_DOMAINS = [
 
 export type AcademicAgentOptions = {
   paidFetcher?: PaidFetcher;
-  /**
-   * @devOnly TEST-ONLY CONTROL:
-   * Do NOT use this parameter in production code or expose it to end users.
-   * In production, the Academic Agent autonomously detects paywalled resources
-   * and routes requests through the Module 3 PaidFetcher boundary.
-   */
   forcePaidFetchUrl?: string;
 };
 
-/**
- * Academic Agent implementation.
- * Type: "academic"
- * Sources: type "academic", paid false (free path) or paid true (paid path)
- * 
- * INTENDED PRODUCTION FLOW:
- * Academic Agent -> Discover resource -> Detect paid access requirement -> Call PaidFetcher boundary -> Module 3 handles x402 settlement
- */
 export async function executeAcademicAgent(
   task: Task,
   options?: AcademicAgentOptions
@@ -126,24 +97,25 @@ export async function executeAcademicAgent(
     "academic"
   );
 
-  // Step 5: Map and deduplicate sources & findings (all sources marked type "academic")
+  // Step 5: Map and deduplicate sources & findings against authoritative search results
   const sourceMap = new Map<string, SourceRef>();
   const agentFindings: AgentFinding[] = [];
 
   for (const raw of rawFindings) {
-    const normUrl = normalizeUrl(raw.url);
-    const isPaid = paidSourceUrl ? normalizeUrl(paidSourceUrl) === normUrl : false;
+    const authoritative = matchAuthoritativeSource(raw.url, raw.title, searchResults);
+    const normKey = normalizeUrl(authoritative.url);
+    const isPaid = paidSourceUrl ? normalizeUrl(paidSourceUrl) === normKey : false;
 
-    if (!sourceMap.has(normUrl)) {
-      sourceMap.set(normUrl, {
-        title: raw.title || "Academic Publication",
-        url: raw.url,
+    if (!sourceMap.has(normKey)) {
+      sourceMap.set(normKey, {
+        title: authoritative.title || "Academic Publication",
+        url: authoritative.url,
         type: "academic",
         paid: isPaid,
       });
     }
 
-    const source = sourceMap.get(normUrl)!;
+    const source = sourceMap.get(normKey)!;
     agentFindings.push({
       claim: raw.claim,
       source,
@@ -166,3 +138,4 @@ export async function executeAcademicAgent(
     paymentReceiptId,
   };
 }
+

@@ -68,63 +68,83 @@ export async function searchTavily(
     payload.include_domains = options.domainFilter;
   }
 
-  try {
-    const response = await fetch(endpoint, {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-      },
-      body: JSON.stringify(payload),
-    });
+  const MAX_RETRIES = 3;
 
-    if (!response.ok) {
-      const errText = await response.text();
-      if (isMockAllowed()) {
-        console.warn(
-          `[TavilySearch] Request failed (${response.status}): ${errText}. Falling back to mock results in mock mode.`
-        );
+  for (let attempt = 1; attempt <= MAX_RETRIES; attempt++) {
+    try {
+      const response = await fetch(endpoint, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify(payload),
+      });
+
+      if (!response.ok) {
+        const errText = await response.text();
+        if (isMockAllowed()) {
+          console.warn(
+            `[TavilySearch] Request failed (${response.status}): ${errText}. Falling back to mock results in mock mode.`
+          );
+          return generateMockSearchResults(query, options?.domainFilter);
+        }
+        throw new Error(`Tavily Search API request failed with status ${response.status}: ${errText}`);
+      }
+
+      const data = await response.json();
+      const results: TavilySearchResultItem[] = [];
+      const seenUrls = new Set<string>();
+
+      if (data?.results && Array.isArray(data.results)) {
+        for (const item of data.results) {
+          if (!item.url) continue;
+          const normUrl = normalizeUrl(item.url);
+          if (seenUrls.has(normUrl)) continue;
+          seenUrls.add(normUrl);
+
+          const title = (item.title || "Untitled Source").trim();
+          const snippet = (item.content || item.snippet || "").trim();
+          const content = item.content || snippet;
+
+          results.push({
+            title,
+            url: item.url,
+            snippet,
+            content,
+            description: snippet || title,
+          });
+        }
+      }
+
+      if (results.length === 0 && isMockAllowed()) {
         return generateMockSearchResults(query, options?.domainFilter);
       }
-      throw new Error(`Tavily Search API request failed with status ${response.status}: ${errText}`);
-    }
 
-    const data = await response.json();
-    const results: TavilySearchResultItem[] = [];
-    const seenUrls = new Set<string>();
-
-    if (data?.results && Array.isArray(data.results)) {
-      for (const item of data.results) {
-        if (!item.url) continue;
-        const normUrl = normalizeUrl(item.url);
-        if (seenUrls.has(normUrl)) continue;
-        seenUrls.add(normUrl);
-
-        const title = (item.title || "Untitled Source").trim();
-        const snippet = (item.content || item.snippet || "").trim();
-        const content = item.content || snippet;
-
-        results.push({
-          title,
-          url: item.url,
-          snippet,
-          content,
-          description: snippet || title,
-        });
+      return results;
+    } catch (err: any) {
+      if (
+        attempt < MAX_RETRIES &&
+        (err.message?.includes("fetch failed") ||
+          err.message?.includes("ECONNRESET") ||
+          err.message?.includes("ETIMEDOUT"))
+      ) {
+        const backoffMs = attempt * 1000;
+        console.warn(
+          `[TavilySearch] Socket/network error on attempt ${attempt}/${MAX_RETRIES}. Retrying in ${backoffMs}ms...`
+        );
+        await new Promise((resolve) => setTimeout(resolve, backoffMs));
+        continue;
       }
-    }
 
-    if (results.length === 0 && isMockAllowed()) {
-      return generateMockSearchResults(query, options?.domainFilter);
+      if (isMockAllowed()) {
+        console.warn(`[TavilySearch] Request error: ${(err as Error).message}. Returning mock results in mock mode.`);
+        return generateMockSearchResults(query, options?.domainFilter);
+      }
+      throw err;
     }
-
-    return results;
-  } catch (error) {
-    if (isMockAllowed()) {
-      console.error("[TavilySearch] Error during search, using mock fallback in test mode:", error);
-      return generateMockSearchResults(query, options?.domainFilter);
-    }
-    throw error;
   }
+
+  return generateMockSearchResults(query, options?.domainFilter);
 }
 
 /**
