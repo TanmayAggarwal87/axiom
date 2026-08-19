@@ -5,10 +5,10 @@ import { stateReducer } from "../orchestrator/reducer";
 // Check environment variables
 const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL || "";
 const supabaseKey = process.env.SUPABASE_SERVICE_ROLE_KEY || "";
-const useRealSupabase = supabaseUrl !== "" && supabaseKey !== "";
+export const useRealSupabase = supabaseUrl !== "" && supabaseKey !== "";
 
 // In-memory fallback database (attached to globalThis for HMR persistence)
-type InMemoryDB = {
+export type InMemoryDB = {
   users: Record<string, { id: string; email: string; credits: number }>;
   sessions: Record<string, { id: string; user_id: string; created_at: string }>;
   states: Record<string, SessionState>;
@@ -18,7 +18,7 @@ const globalForDb = globalThis as unknown as {
   inMemoryDb: InMemoryDB | undefined;
 };
 
-const inMemoryDb: InMemoryDB = globalForDb.inMemoryDb ?? {
+export const inMemoryDb: InMemoryDB = globalForDb.inMemoryDb ?? {
   users: {
     "default-user": { id: "default-user", email: "demo@axiom.org", credits: 10.0 },
   },

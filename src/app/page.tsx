@@ -22,7 +22,7 @@ import { Button } from "@/components/ui/button";
 type AppPhase = "idle" | "running" | "completed";
 
 export default function Home() {
-  const { isSignedIn, userId } = useAuth();
+  const { isLoaded, isSignedIn, userId } = useAuth();
   const { user } = useUser();
   const [phase, setPhase] = useState<AppPhase>("idle");
   const [credits, setCredits] = useState<number>(10);
@@ -36,7 +36,7 @@ export default function Home() {
 
   // Authoritative balance refetch
   const refreshBalance = useCallback(async () => {
-    if (!isSignedIn) return;
+    if (!isLoaded || !isSignedIn) return;
     if (isFetchingBalanceRef.current) return;
     isFetchingBalanceRef.current = true;
     setRefreshing(true);
@@ -52,11 +52,11 @@ export default function Home() {
       isFetchingBalanceRef.current = false;
       setRefreshing(false);
     }
-  }, [isSignedIn]);
+  }, [isLoaded, isSignedIn]);
 
   // 1. Initial fetch + Stripe Checkout success detection + Tab Focus fallback
   useEffect(() => {
-    if (isSignedIn) {
+    if (isLoaded && isSignedIn) {
       refreshBalance();
     }
 

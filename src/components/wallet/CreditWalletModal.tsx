@@ -50,7 +50,6 @@ export function CreditWalletModal({
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({
-            userId: "default-user",
             amountUsd: selected,
             successUrl: `${window.location.origin}/?checkout=success&session_id={CHECKOUT_SESSION_ID}`,
             cancelUrl: `${window.location.origin}/?checkout=cancel`,
@@ -67,7 +66,7 @@ export function CreditWalletModal({
       const res = await fetch("/api/wallet/topup", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ userId: "default-user", amount: selected }),
+        body: JSON.stringify({ amount: selected }),
       });
       const data = await res.json();
       if (data.success) {

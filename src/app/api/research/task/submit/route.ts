@@ -1,10 +1,15 @@
 import { NextResponse } from "next/server";
+import { auth } from "@clerk/nextjs/server";
 import { insertEvent } from "@/lib/supabase/db";
 import { executeSession } from "@/lib/orchestrator/executor";
 import type { SessionEvent } from "@/lib/orchestrator/types";
 
 export async function POST(req: Request) {
   try {
+    const { userId } = await auth();
+    if (!userId) {
+      return NextResponse.json({ success: false, error: "Unauthorized" }, { status: 401 });
+    }
     const body = await req.json();
     const { taskId, sessionId, result } = body;
 
