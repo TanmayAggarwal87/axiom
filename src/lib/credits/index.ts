@@ -7,9 +7,10 @@ export const TASK_COST_SEARCH_FREE = 0.005;
 
 /**
  * Creates Supabase client instance using environment variables.
+ * Returns null if schema checks failed and we fell back to In-Memory mode.
  */
 export function getSupabaseClient(): SupabaseClient | null {
-  return supabase;
+  return useRealSupabase ? supabase : null;
 }
 
 /**

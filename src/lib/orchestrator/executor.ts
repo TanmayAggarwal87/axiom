@@ -1,5 +1,5 @@
 import { runAgent } from "../../agents/run-agent";
-import { getSessionState, insertEvent } from "../supabase/db";
+import { getSessionState, insertEvent, saveSessionReport, getSessionUserId, markSessionFailed } from "../supabase/db";
 import { payAndFetch } from "../x402/payAndFetch";
 import { runFactChecker } from "../agents/factChecker";
 import { compileReport } from "../report/compiler";
@@ -236,13 +236,14 @@ async function runSynthesizeAndCompile(sessionId: string): Promise<void> {
  * Includes circuit breakers for wall-clock time, LLM calls, Tavily calls, and loop iterations.
  */
 export async function executeSession(sessionId: string): Promise<SessionState> {
-  const stateWriter = new SupabaseStateWriter(sessionId);
-  const counters: SessionCounters = {
-    llmCalls: 0,
-    tavilyCalls: 0,
-    loopIterations: 0,
-    startTime: Date.now(),
-  };
+  try {
+    const stateWriter = new SupabaseStateWriter(sessionId);
+    const counters: SessionCounters = {
+      llmCalls: 0,
+      tavilyCalls: 0,
+      loopIterations: 0,
+      startTime: Date.now(),
+    };
 
   while (true) {
     counters.loopIterations++;
@@ -406,6 +407,11 @@ export async function executeSession(sessionId: string): Promise<SessionState> {
     });
 
     await Promise.all(launchPromises);
+  }
+  } catch (err) {
+    console.error(`[executeSession Error] Session ${sessionId}:`, err);
+    await markSessionFailed(sessionId);
+    throw err;
   }
 }
 
@@ -592,6 +598,14 @@ async function executeCompilerAgent(
   const query = firstTask?.input || "Research Topic";
 
   const compiledReport = compileReport(state, query);
+
+  // Persist the compiled report and set status to completed
+  const userId = (await getSessionUserId(sessionId)) || "default-user";
+  try {
+    await saveSessionReport(sessionId, userId, compiledReport);
+  } catch (err) {
+    console.error("[Executor] Failed to save session report:", err);
+  }
 
   // Log report_generated event
   const reportEvent: SessionEvent = {
