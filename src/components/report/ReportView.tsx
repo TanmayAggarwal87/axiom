@@ -69,13 +69,18 @@ const SECTION_ICONS: Record<string, React.ElementType> = {
 // ─── Component ─────────────────────────────────────────────────────────────────
 
 interface ReportViewProps {
-  state: SessionState;
-  query: string;
+  state?: SessionState;
+  query?: string;
   onNewResearch: () => void;
+  precompiledReport?: CompiledReport;
 }
 
-export function ReportView({ state, query, onNewResearch }: ReportViewProps) {
-  const report = useMemo(() => compileReport(state, query), [state, query]);
+export function ReportView({ state, query, onNewResearch, precompiledReport }: ReportViewProps) {
+  const report = useMemo(() => {
+    if (precompiledReport) return precompiledReport;
+    if (state && query) return compileReport(state, query);
+    throw new Error("ReportView: state and query, or precompiledReport must be provided.");
+  }, [state, query, precompiledReport]);
   const [exportingPdf, setExportingPdf] = useState(false);
 
   async function handleExportPdf() {

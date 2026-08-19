@@ -396,7 +396,7 @@ function TaskCard({ task }: { task: Task }) {
 
   return (
     <Card
-      className={`border-border/20 bg-card/40 backdrop-blur-sm p-3 flex items-start sm:items-center gap-3 transition-all duration-300 ${
+      className={`border-border/20 bg-card/40 backdrop-blur-sm p-3 flex flex-row items-start sm:items-center gap-3 transition-all duration-300 ${
         task.status === "running"
           ? "ring-1 ring-amber-500/30 bg-amber-500/5 shadow-md shadow-amber-500/5"
           : task.status === "done"

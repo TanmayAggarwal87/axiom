@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 import { auth } from "@clerk/nextjs/server";
-import { ensureUser, getUserCredits, supabase } from "@/lib/supabase/db";
+import { ensureUser, getUserCredits, supabase, useRealSupabase } from "@/lib/supabase/db";
 
 /**
  * Direct top-up handler for testing / credit top-up.
@@ -36,7 +36,7 @@ export async function POST(req: Request) {
     const currentCredits = await getUserCredits(userId);
     const newBalance = Number((currentCredits + amount).toFixed(4));
 
-    if (supabase) {
+    if (useRealSupabase && supabase) {
       const { error } = await supabase.from("users").upsert({
         id: userId,
         email,

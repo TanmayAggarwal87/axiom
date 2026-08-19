@@ -13,7 +13,8 @@ export const MAX_DYNAMIC_TASKS = 3;
 export async function initializeSessionBudget(
   sessionId: string,
   userId: string,
-  customTotalUsdc?: number
+  customTotalUsdc?: number,
+  query: string = ""
 ): Promise<SessionBudget> {
   const totalUsdc = customTotalUsdc ?? DEFAULT_BUDGET_USDC;
 
@@ -39,7 +40,7 @@ export async function initializeSessionBudget(
     maxDynamicTasks: MAX_DYNAMIC_TASKS,
   };
 
-  await createSession(sessionId, userId, budget);
+  await createSession(sessionId, userId, budget, query);
 
   return budget;
 }

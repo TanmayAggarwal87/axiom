@@ -33,7 +33,7 @@ export async function POST(req: Request) {
     const sessionId = `session-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
 
     // 1. Initialize budget & session
-    const budget = await initializeSessionBudget(sessionId, userId, budgetUsdc);
+    const budget = await initializeSessionBudget(sessionId, userId, budgetUsdc, query);
 
     // 2. Plan research tasks via Gemini
     const tasks = await planResearch(sessionId, query);

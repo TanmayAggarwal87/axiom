@@ -5,13 +5,46 @@ import { stateReducer } from "../orchestrator/reducer";
 // Check environment variables
 const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL || "";
 const supabaseKey = process.env.SUPABASE_SERVICE_ROLE_KEY || "";
-export const useRealSupabase = supabaseUrl !== "" && supabaseKey !== "";
+export let useRealSupabase = supabaseUrl !== "" && supabaseKey !== "";
+
+// Initialize Supabase Client
+export const supabase = useRealSupabase ? createClient(supabaseUrl, supabaseKey) : null;
+
+export let schemaCheckPromise: Promise<void> | null = null;
+
+// Schema compatibility self-check
+if (useRealSupabase && supabase) {
+  schemaCheckPromise = (async () => {
+    try {
+      const [sessionsCheck, reportsCheck] = await Promise.all([
+        supabase.from("sessions").select("query, status").limit(1),
+        supabase.from("session_reports").select("id").limit(1)
+      ]);
+
+      if (
+        (sessionsCheck.error && (sessionsCheck.error.code === "42703" || sessionsCheck.error.message.includes("does not exist"))) ||
+        (reportsCheck.error && (reportsCheck.error.message.includes("Could not find the table") || reportsCheck.error.message.includes("does not exist")))
+      ) {
+        console.warn(
+          "[Supabase DB] Schema is incompatible (migrations not applied). Falling back to In-Memory mode.\n" +
+          "Sessions Check:", sessionsCheck.error?.message || "OK", "\n" +
+          "Reports Check:", reportsCheck.error?.message || "OK"
+        );
+        useRealSupabase = false;
+      }
+    } catch (err) {
+      console.warn("[Supabase DB] Failed to run schema check, falling back to In-Memory mode:", err);
+      useRealSupabase = false;
+    }
+  })();
+}
 
 // In-memory fallback database (attached to globalThis for HMR persistence)
 export type InMemoryDB = {
   users: Record<string, { id: string; email: string; credits: number }>;
-  sessions: Record<string, { id: string; user_id: string; created_at: string }>;
+  sessions: Record<string, { id: string; user_id: string; created_at: string; query?: string; status?: string }>;
   states: Record<string, SessionState>;
+  sessionReports: Record<string, { id: string; session_id: string; user_id: string; report_json: any; generated_at: string }>;
 };
 
 const globalForDb = globalThis as unknown as {
@@ -24,17 +57,21 @@ export const inMemoryDb: InMemoryDB = globalForDb.inMemoryDb ?? {
   },
   sessions: {},
   states: {},
+  sessionReports: {},
 };
 
 if (process.env.NODE_ENV !== "production") {
   globalForDb.inMemoryDb = inMemoryDb;
 }
 
-// Initialize Supabase Client
-export const supabase = useRealSupabase ? createClient(supabaseUrl, supabaseKey) : null;
-
 if (!useRealSupabase) {
   console.log("[Supabase DB] Running in mock / in-memory database mode.");
+}
+
+async function ensureSchemaChecked() {
+  if (schemaCheckPromise) {
+    await schemaCheckPromise;
+  }
 }
 
 /**
@@ -42,6 +79,7 @@ if (!useRealSupabase) {
  * Preserves existing user credits if user already exists.
  */
 export async function ensureUser(userId: string, email: string, initialCredits: number = 10.0) {
+  await ensureSchemaChecked();
   if (useRealSupabase && supabase) {
     const { data: existingUser } = await supabase
       .from("users")
@@ -71,6 +109,7 @@ export async function ensureUser(userId: string, email: string, initialCredits: 
  * Returns user credits.
  */
 export async function getUserCredits(userId: string): Promise<number> {
+  await ensureSchemaChecked();
   if (useRealSupabase && supabase) {
     const { data, error } = await supabase
       .from("users")
@@ -94,6 +133,7 @@ export async function getUserCredits(userId: string): Promise<number> {
  * Debits user credits. Coordinate with Module 3.
  */
 export async function checkAndDebitCredits(userId: string, amount: number): Promise<boolean> {
+  await ensureSchemaChecked();
   if (useRealSupabase && supabase) {
     // Perform simple atomic transaction via select & update
     const { data: user, error: selectError } = await supabase
@@ -133,8 +173,10 @@ export async function checkAndDebitCredits(userId: string, amount: number): Prom
 export async function createSession(
   sessionId: string,
   userId: string,
-  budget: SessionBudget
+  budget: SessionBudget,
+  query: string = ""
 ): Promise<void> {
+  await ensureSchemaChecked();
   const initialEvent: SessionEvent = {
     id: `evt-init-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`,
     sessionId,
@@ -161,6 +203,8 @@ export async function createSession(
     const { error: sessionErr } = await supabase.from("sessions").insert({
       id: sessionId,
       user_id: userId,
+      query: query,
+      status: "in_progress"
     });
     if (sessionErr) throw sessionErr;
 
@@ -187,6 +231,8 @@ export async function createSession(
     inMemoryDb.sessions[sessionId] = {
       id: sessionId,
       user_id: userId,
+      query: query,
+      status: "in_progress",
       created_at: new Date().toISOString(),
     };
     inMemoryDb.states[sessionId] = initialState;
@@ -197,6 +243,7 @@ export async function createSession(
  * Retrieves the full derived session state.
  */
 export async function getSessionState(sessionId: string): Promise<SessionState | null> {
+  await ensureSchemaChecked();
   if (useRealSupabase && supabase) {
     // Fetch all related data in parallel
     const [
@@ -251,12 +298,12 @@ export async function getSessionState(sessionId: string): Promise<SessionState |
       })),
       budget: budget
         ? {
-            sessionId: budget.session_id,
-            totalUsdc: Number(budget.total_usdc),
-            spentUsdc: Number(budget.spent_usdc),
-            maxFactCheckIterations: budget.max_fact_check_iterations,
-            maxDynamicTasks: budget.max_dynamic_tasks,
-          }
+          sessionId: budget.session_id,
+          totalUsdc: Number(budget.total_usdc),
+          spentUsdc: Number(budget.spent_usdc),
+          maxFactCheckIterations: budget.max_fact_check_iterations,
+          maxDynamicTasks: budget.max_dynamic_tasks,
+        }
         : null,
       payments: (payments || []).map((p) => ({
         id: p.id,
@@ -288,6 +335,7 @@ export async function getSessionState(sessionId: string): Promise<SessionState |
  * Retrieves the owner userId of a research session.
  */
 export async function getSessionUserId(sessionId: string): Promise<string | null> {
+  await ensureSchemaChecked();
   if (useRealSupabase && supabase) {
     const { data } = await supabase.from("sessions").select("user_id").eq("id", sessionId).single();
     return data?.user_id || null;
@@ -304,6 +352,7 @@ const sessionLocks: Record<string, Promise<any>> = {};
  * to derive and save updated state. Ensures sequential execution.
  */
 export async function insertEvent(sessionId: string, event: SessionEvent): Promise<SessionState> {
+  await ensureSchemaChecked();
   // Simple lock to avoid race conditions during concurrent reducer executions
   const currentLock = sessionLocks[sessionId] || Promise.resolve();
 
@@ -520,4 +569,175 @@ export async function insertEvent(sessionId: string, event: SessionEvent): Promi
 
   sessionLocks[sessionId] = nextLock;
   return nextLock;
+}
+
+/**
+ * Retrieves basic metadata of a research session (user_id, query, status).
+ */
+export async function getSessionMeta(sessionId: string): Promise<{ userId: string | null; query: string; status: string } | null> {
+  await ensureSchemaChecked();
+  if (useRealSupabase && supabase) {
+    const { data, error } = await supabase
+      .from("sessions")
+      .select("user_id, query, status")
+      .eq("id", sessionId)
+      .single();
+    if (error || !data) return null;
+    return {
+      userId: data.user_id,
+      query: data.query || "",
+      status: data.status || "in_progress",
+    };
+  } else {
+    const session = inMemoryDb.sessions[sessionId];
+    if (!session) return null;
+    return {
+      userId: session.user_id,
+      query: session.query || "",
+      status: session.status || "in_progress",
+    };
+  }
+}
+
+/**
+ * Stores the final CompiledReport JSON and sets session status to 'completed'.
+ */
+export async function saveSessionReport(
+  sessionId: string,
+  userId: string,
+  compiledReport: any
+): Promise<void> {
+  await ensureSchemaChecked();
+  if (useRealSupabase && supabase) {
+    // 1. Insert into session_reports
+    const { error: reportErr } = await supabase.from("session_reports").upsert({
+      session_id: sessionId,
+      user_id: userId,
+      report_json: compiledReport,
+      generated_at: new Date().toISOString(),
+    }, { onConflict: "session_id" });
+    if (reportErr) throw reportErr;
+
+    // 2. Update status in sessions
+    const { error: sessionErr } = await supabase
+      .from("sessions")
+      .update({ status: "completed" })
+      .eq("id", sessionId);
+    if (sessionErr) throw sessionErr;
+  } else {
+    inMemoryDb.sessionReports[sessionId] = {
+      id: `rep-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`,
+      session_id: sessionId,
+      user_id: userId,
+      report_json: compiledReport,
+      generated_at: new Date().toISOString(),
+    };
+    if (inMemoryDb.sessions[sessionId]) {
+      inMemoryDb.sessions[sessionId].status = "completed";
+    }
+  }
+}
+
+/**
+ * Retrieves the stored CompiledReport JSON for a completed session.
+ */
+export async function getSessionReport(sessionId: string): Promise<any | null> {
+  await ensureSchemaChecked();
+  if (useRealSupabase && supabase) {
+    const { data, error } = await supabase
+      .from("session_reports")
+      .select("report_json")
+      .eq("session_id", sessionId)
+      .single();
+    if (error || !data) return null;
+    return data.report_json;
+  } else {
+    return inMemoryDb.sessionReports[sessionId]?.report_json || null;
+  }
+}
+
+/**
+ * Returns a list of all research sessions belonging to a specific Clerk user, ordered most recent first.
+ */
+export async function getUserSessions(userId: string): Promise<Array<{ id: string; query: string; status: string; created_at: string }>> {
+  await ensureSchemaChecked();
+  if (useRealSupabase && supabase) {
+    const { data, error } = await supabase
+      .from("sessions")
+      .select("id, query, status, created_at")
+      .eq("user_id", userId)
+      .order("created_at", { ascending: false });
+    if (error) {
+      console.error("[db] Error fetching user sessions:", error);
+      return [];
+    }
+    return (data || []).map((s) => ({
+      id: s.id,
+      query: s.query || "",
+      status: s.status || "in_progress",
+      created_at: s.created_at,
+    }));
+  } else {
+    return Object.values(inMemoryDb.sessions)
+      .filter((s) => s.user_id === userId)
+      .sort((a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime())
+      .map((s) => ({
+        id: s.id,
+        query: s.query || "",
+        status: s.status || "in_progress",
+        created_at: s.created_at,
+      }));
+  }
+}
+
+/**
+ * Marks the session status as 'failed'.
+ */
+export async function markSessionFailed(sessionId: string): Promise<void> {
+  await ensureSchemaChecked();
+  if (useRealSupabase && supabase) {
+    await supabase.from("sessions").update({ status: "failed" }).eq("id", sessionId);
+  } else {
+    if (inMemoryDb.sessions[sessionId]) {
+      inMemoryDb.sessions[sessionId].status = "failed";
+    }
+  }
+}
+
+/**
+ * Deletes a specific session and all its associated records.
+ */
+export async function deleteSession(sessionId: string): Promise<boolean> {
+  await ensureSchemaChecked();
+  if (useRealSupabase && supabase) {
+    const { error } = await supabase.from("sessions").delete().eq("id", sessionId);
+    return !error;
+  } else {
+    delete inMemoryDb.sessions[sessionId];
+    delete inMemoryDb.states[sessionId];
+    delete inMemoryDb.sessionReports[sessionId];
+    return true;
+  }
+}
+
+/**
+ * Deletes all research sessions for a specific user.
+ */
+export async function deleteUserSessions(userId: string): Promise<boolean> {
+  await ensureSchemaChecked();
+  if (useRealSupabase && supabase) {
+    const { error } = await supabase.from("sessions").delete().eq("user_id", userId);
+    return !error;
+  } else {
+    const userSessionIds = Object.values(inMemoryDb.sessions)
+      .filter((s) => s.user_id === userId)
+      .map((s) => s.id);
+    
+    for (const sid of userSessionIds) {
+      delete inMemoryDb.sessions[sid];
+      delete inMemoryDb.states[sid];
+      delete inMemoryDb.sessionReports[sid];
+    }
+    return true;
+  }
 }
