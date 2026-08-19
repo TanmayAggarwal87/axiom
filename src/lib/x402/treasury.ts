@@ -49,7 +49,7 @@ export function getTreasuryAccount() {
 }
 
 export function getTreasuryPublicClient() {
-  const rpcUrl = process.env.BASE_SEPOLIA_RPC_URL || "https://sepolia.base.org";
+  const rpcUrl = process.env.BASE_SEPOLIA_RPC_URL || "https://base-sepolia-rpc.publicnode.com";
   return createPublicClient({
     chain: baseSepolia,
     transport: http(rpcUrl),
@@ -58,7 +58,7 @@ export function getTreasuryPublicClient() {
 
 export function getTreasuryWalletClient() {
   const account = getTreasuryAccount();
-  const rpcUrl = process.env.BASE_SEPOLIA_RPC_URL || "https://sepolia.base.org";
+  const rpcUrl = process.env.BASE_SEPOLIA_RPC_URL || "https://base-sepolia-rpc.publicnode.com";
   return createWalletClient({
     account,
     chain: baseSepolia,
@@ -69,6 +69,16 @@ export function getTreasuryWalletClient() {
 export function getTreasuryAddress(): `0x${string}` {
   return getTreasuryAccount().address;
 }
+
+export function getPayeeAddress(): `0x${string}` {
+  const payee = process.env.X402_PAYEE_ADDRESS?.trim();
+  if (payee && payee.startsWith("0x") && payee.length === 42) {
+    return getAddress(payee) as `0x${string}`;
+  }
+  // Default to a distinct recipient address to prevent self-transfer signature rejection (from == to)
+  return "0x1111111111111111111111111111111111111111";
+}
+
 
 /**
  * Fetches native ETH balance. Throws on RPC failure — no fabricated fallback values.
