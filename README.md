@@ -287,7 +287,5 @@ This project is licensed under the MIT License.
 
 ---
 
-Built by [Tanmay Aggarwal](https://github.com/TanmayAggarwal87)  
-📧 undefined
+Built by Team DhoomCoders
 
---made by docify--
